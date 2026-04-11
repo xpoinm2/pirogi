@@ -1,0 +1,4 @@
+text,send_at,attachment_path,disable_preview
+"Доброе утро! Напоминание о созвоне в 11:00","2026-05-01 09:00:00","",true
+"Ниже прикладываю файл с планом на день","2026-05-01 10:30:00","data/attachments/plan.txt",false
+"https://example.com/report — посмотрите перед встречей","2026-05-01 10:45:00","",true

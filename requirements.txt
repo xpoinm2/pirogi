@@ -1,0 +1,4 @@
+Telethon==1.43.0
+python-dotenv==1.2.2
+tkinterdnd2==0.4.3
+tzdata==2026.1

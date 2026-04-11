@@ -1,0 +1,14 @@
+[
+  {
+    "text": "Сообщение из JSON #1",
+    "send_at": "2026-05-02 09:30:00",
+    "attachment_path": "",
+    "disable_preview": true
+  },
+  {
+    "text": "Сообщение из JSON #2 с вложением",
+    "send_at": "2026-05-02 11:00:00",
+    "attachment_path": "data/attachments/example.txt",
+    "disable_preview": false
+  }
+]

@@ -1,0 +1,32 @@
+from __future__ import annotations
+
+import logging
+
+from telethon import TelegramClient
+from telethon.sessions import StringSession
+
+from app.settings import Settings
+
+
+def create_client(settings: Settings) -> TelegramClient:
+    session: StringSession | str
+    if settings.string_session:
+        session = StringSession(settings.string_session)
+    else:
+        session = str(settings.session_path)
+
+    return TelegramClient(
+        session=session,
+        api_id=settings.api_id,
+        api_hash=settings.api_hash,
+        request_retries=settings.request_retries,
+        connection_retries=settings.connection_retries,
+        retry_delay=settings.retry_delay_seconds,
+        auto_reconnect=True,
+        flood_sleep_threshold=0,
+        raise_last_call_error=True,
+        device_model="Telegram Manager CLI",
+        system_version="Windows/Python",
+        app_version="1.0.0",
+        base_logger=logging.getLogger("telethon"),
+    )
