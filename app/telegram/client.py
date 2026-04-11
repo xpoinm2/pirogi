@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from telethon import TelegramClient
 from telethon.sessions import StringSession
@@ -8,12 +9,13 @@ from telethon.sessions import StringSession
 from app.settings import Settings
 
 
-def create_client(settings: Settings) -> TelegramClient:
+def create_client(settings: Settings, *, session_path: Path | None = None) -> TelegramClient:
     session: StringSession | str
     if settings.string_session:
         session = StringSession(settings.string_session)
     else:
-        session = str(settings.session_path)
+        resolved_session_path = session_path or settings.session_path
+        session = str(resolved_session_path)
 
     return TelegramClient(
         session=session,

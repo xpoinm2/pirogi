@@ -1,0 +1,488 @@
+diff a/app/gui/app.py b/app/gui/app.py	(rejected hunks)
+@@ -1,168 +1,185 @@
+ from __future__ import annotations
+ 
+ import traceback
+ from concurrent.futures import Future
+ from pathlib import Path
+ import tkinter as tk
+ from tkinter import filedialog, messagebox, ttk
+ from tkinter.scrolledtext import ScrolledText
+ 
+ from app.db import Database
+ from app.exceptions import ConfigError
+ from app.gui.async_worker import AsyncWorker
+ from app.gui.backend import AuthResult, TelegramManagerBackend
+ from app.logging_setup import setup_logging
+ from app.models import DialogInfo, ImportMessageItem, ScheduleBatchResult, ScheduledMessageInfo
+ from app.settings import Settings
+ from app.utils import format_dt, truncate_text
+ 
+ try:
+     from tkinterdnd2 import DND_FILES, TkinterDnD
+-except ImportError:  # pragma: no cover - fallback for environments without tkinterdnd2
++except ImportError:  # pragma: no cover
+     DND_FILES = "DND_Files"
+ 
+     class _FallbackTk(tk.Tk):
+         pass
+ 
+     class TkinterDnD:  # type: ignore[no-redef]
+         Tk = _FallbackTk
+ 
+ 
+ class TelegramManagerGui:
+     def __init__(self, root: tk.Tk, *, settings: Settings) -> None:
+         self.root = root
+         self.settings = settings
+         self.db = Database(settings.database_path)
+         self.db.init()
+         self.logger = setup_logging(settings.log_dir, settings.log_level)
+         self.worker = AsyncWorker()
+         self.backend = TelegramManagerBackend(settings=settings, db=self.db, logger=self.logger)
+ 
+         self.dialogs: list[DialogInfo] = []
+         self.preview_items: list[ImportMessageItem] = []
+         self.scheduled_items: list[ScheduledMessageInfo] = []
+ 
+         self.status_var = tk.StringVar(value="Готово")
+-        self.phone_var = tk.StringVar(value=settings.default_phone or "")
+-        self.code_var = tk.StringVar()
+-        self.password_var = tk.StringVar()
+         self.file_var = tk.StringVar()
+         self.search_var = tk.StringVar()
+         self.dry_run_var = tk.BooleanVar(value=False)
+-        self.auth_info_var = tk.StringVar(value="Session ещё не проверялась")
++        self.auth_info_var = tk.StringVar(value="Session не подключена")
+         self.selected_chat_var = tk.StringVar(value="Чат не выбран")
+         self.cancel_ids_var = tk.StringVar()
++        self.session_file_var = tk.StringVar(value="")
++        self.session_status_var = tk.StringVar(value="Отключено")
+ 
+         self.root.title("Telegram Manager Desktop")
+         self.root.geometry("1320x860")
+         self.root.minsize(1100, 720)
+         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+ 
+         self._build_ui()
+         self._register_drop_targets()
+-        self._append_log(f"Session path: {self.settings.session_path}")
++        self._sync_session_state()
++
++        self._append_log(f"Session dir: {self.settings.session_dir}")
+         self._append_log(f"Database path: {self.settings.database_path}")
+         self._append_log(f"Log directory: {self.settings.log_dir}")
+ 
++        if self.backend.active_session_path is not None:
++            self.root.after(250, self.check_session)
++
+     def _build_ui(self) -> None:
+         self.root.columnconfigure(0, weight=1)
+         self.root.rowconfigure(1, weight=1)
+ 
+         header = ttk.Frame(self.root, padding=(14, 12))
+         header.grid(row=0, column=0, sticky="ew")
+         header.columnconfigure(1, weight=1)
+ 
+         ttk.Label(header, text="Telegram Manager Desktop", font=("Segoe UI", 16, "bold")).grid(
+             row=0,
+             column=0,
+             sticky="w",
+         )
+         ttk.Label(
+             header,
+             text=(
+-                f"Session: {self.settings.session_path}    "
++                f"Session dir: {self.settings.session_dir}    "
+                 f"SQLite: {self.settings.database_path}    "
+                 f"Logs: {self.settings.log_dir}"
+             ),
+         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
+         ttk.Label(header, textvariable=self.status_var, foreground="#0b5ed7").grid(row=0, column=1, sticky="e")
+ 
+         notebook = ttk.Notebook(self.root)
+         notebook.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
+ 
+         self.auth_tab = ttk.Frame(notebook, padding=12)
+         self.schedule_tab = ttk.Frame(notebook, padding=12)
+         self.scheduled_tab = ttk.Frame(notebook, padding=12)
+         self.local_tab = ttk.Frame(notebook, padding=12)
+ 
+-        notebook.add(self.auth_tab, text="Авторизация")
++        notebook.add(self.auth_tab, text="Session")
+         notebook.add(self.schedule_tab, text="Импорт и постановка")
+         notebook.add(self.scheduled_tab, text="Scheduled messages")
+         notebook.add(self.local_tab, text="Локальная SQLite")
+ 
+-        self._build_auth_tab()
++        self._build_session_tab()
+         self._build_schedule_tab()
+         self._build_scheduled_tab()
+         self._build_local_tab()
+         self._build_log_panel()
+ 
+-    def _build_auth_tab(self) -> None:
++    def _build_session_tab(self) -> None:
+         frame = self.auth_tab
+-        frame.columnconfigure(1, weight=1)
++        frame.columnconfigure(0, weight=1)
+ 
+-        ttk.Label(frame, text="API_ID / API_HASH берутся из config/.env", font=("Segoe UI", 10, "bold")).grid(
+-            row=0, column=0, columnspan=3, sticky="w"
+-        )
+-        ttk.Label(frame, text="Phone").grid(row=1, column=0, sticky="w", pady=(12, 4))
+-        ttk.Entry(frame, textvariable=self.phone_var, width=32).grid(row=1, column=1, sticky="w", pady=(12, 4))
+-        ttk.Button(frame, text="Запросить код", command=self.request_code).grid(row=1, column=2, sticky="w", padx=(8, 0))
++        session_box = ttk.LabelFrame(frame, text="Session", padding=12)
++        session_box.grid(row=0, column=0, sticky="ew")
++        session_box.columnconfigure(0, weight=1)
++
++        path_row = ttk.Frame(session_box)
++        path_row.grid(row=0, column=0, sticky="ew")
++        path_row.columnconfigure(0, weight=1)
+ 
+-        ttk.Label(frame, text="Code").grid(row=2, column=0, sticky="w", pady=4)
+-        ttk.Entry(frame, textvariable=self.code_var, width=24).grid(row=2, column=1, sticky="w", pady=4)
++        self.session_entry = ttk.Entry(path_row, textvariable=self.session_file_var)
++        self.session_entry.grid(row=0, column=0, sticky="ew")
++        ttk.Button(path_row, text="Browse", command=self.browse_session_file).grid(row=0, column=1, padx=(8, 0))
+ 
+-        ttk.Label(frame, text="2FA password").grid(row=3, column=0, sticky="w", pady=4)
+-        ttk.Entry(frame, textvariable=self.password_var, width=24, show="*").grid(row=3, column=1, sticky="w", pady=4)
++        self.session_drop_label = ttk.Label(
++            session_box,
++            text="Перетащите .session файл сюда",
++            anchor="center",
++            relief="groove",
++            padding=18,
++        )
++        self.session_drop_label.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+ 
+-        actions = ttk.Frame(frame)
+-        actions.grid(row=4, column=0, columnspan=3, sticky="w", pady=(12, 0))
+-        ttk.Button(actions, text="Войти", command=self.sign_in).pack(side="left")
++        actions = ttk.Frame(session_box)
++        actions.grid(row=2, column=0, sticky="w", pady=(10, 0))
++        ttk.Button(actions, text="Подключить session", command=self.connect_session).pack(side="left")
++        ttk.Button(actions, text="Отключить session", command=self.disconnect_session).pack(side="left", padx=(8, 0))
+         ttk.Button(actions, text="Проверить session", command=self.check_session).pack(side="left", padx=(8, 0))
+ 
+-        info = ttk.LabelFrame(frame, text="Статус", padding=12)
+-        info.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(16, 0))
+-        info.columnconfigure(0, weight=1)
+-        ttk.Label(info, textvariable=self.auth_info_var, wraplength=900).grid(row=0, column=0, sticky="w")
++        status_box = ttk.LabelFrame(frame, text="Статус", padding=12)
++        status_box.grid(row=1, column=0, sticky="ew", pady=(16, 0))
++        status_box.columnconfigure(1, weight=1)
++        ttk.Label(status_box, text="Файл:").grid(row=0, column=0, sticky="w")
++        ttk.Label(status_box, textvariable=self.session_file_var).grid(row=0, column=1, sticky="w")
++        ttk.Label(status_box, text="Подключение:").grid(row=1, column=0, sticky="w", pady=(6, 0))
++        ttk.Label(status_box, textvariable=self.session_status_var).grid(row=1, column=1, sticky="w", pady=(6, 0))
++        ttk.Label(status_box, textvariable=self.auth_info_var, wraplength=900).grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
+ 
+         note = ttk.LabelFrame(frame, text="Подсказка", padding=12)
+-        note.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(16, 0))
++        note.grid(row=2, column=0, sticky="ew", pady=(16, 0))
+         ttk.Label(
+             note,
+             text=(
+-                "1. Нажми 'Запросить код'.\n"
+-                "2. Введи code из Telegram / SMS.\n"
+-                "3. Если включён облачный пароль 2FA, введи его и нажми 'Войти'."
++                "1. Выберите .session через Browse или drag-and-drop.\n"
++                "2. Нажмите 'Подключить session'.\n"
++                "3. После успешного подключения загружайте диалоги на соседней вкладке."
+             ),
+             justify="left",
+         ).grid(row=0, column=0, sticky="w")
+ 
+     def _build_schedule_tab(self) -> None:
+         frame = self.schedule_tab
+         frame.columnconfigure(0, weight=1)
+         frame.columnconfigure(1, weight=1)
+         frame.rowconfigure(2, weight=1)
+ 
+         dialogs_box = ttk.LabelFrame(frame, text="Диалоги", padding=10)
+         dialogs_box.grid(row=0, column=0, sticky="nsew", padx=(0, 6), pady=(0, 8))
+         dialogs_box.columnconfigure(1, weight=1)
+         dialogs_box.rowconfigure(1, weight=1)
+ 
+         ttk.Button(dialogs_box, text="Загрузить диалоги", command=self.load_dialogs).grid(row=0, column=0, sticky="w")
+         ttk.Label(dialogs_box, text="Фильтр").grid(row=0, column=1, sticky="e", padx=(12, 6))
+         search_entry = ttk.Entry(dialogs_box, textvariable=self.search_var)
+         search_entry.grid(row=0, column=2, sticky="ew")
+         search_entry.bind("<KeyRelease>", lambda _event: self._render_dialogs())
+ 
+         self.dialog_tree = ttk.Treeview(
+             dialogs_box,
+             columns=("id", "title", "type", "username"),
+             show="headings",
+@@ -302,63 +319,86 @@ class TelegramManagerGui:
+             ("db_id", "db_id", 80),
+             ("external_id", "external_id", 110),
+             ("chat_id", "chat_id", 120),
+             ("status", "status", 110),
+             ("send_at", "send_at", 220),
+             ("row", "source_row", 90),
+             ("error", "error_message", 520),
+         ):
+             self.local_tree.heading(column, text=text)
+             self.local_tree.column(column, width=width, anchor="w")
+         self.local_tree.grid(row=0, column=0, sticky="nsew")
+ 
+         local_scroll = ttk.Scrollbar(box, orient="vertical", command=self.local_tree.yview)
+         local_scroll.grid(row=0, column=1, sticky="ns")
+         self.local_tree.configure(yscrollcommand=local_scroll.set)
+ 
+     def _build_log_panel(self) -> None:
+         panel = ttk.LabelFrame(self.root, text="Журнал приложения", padding=10)
+         panel.grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 12))
+         panel.columnconfigure(0, weight=1)
+         self.log_text = ScrolledText(panel, height=9, wrap="word")
+         self.log_text.grid(row=0, column=0, sticky="ew")
+         self.log_text.configure(state="disabled")
+ 
+     def _register_drop_targets(self) -> None:
+-        for widget in (self.drop_label,):
++        mapping = (
++            (self.drop_label, self._on_import_drop),
++            (self.session_drop_label, self._on_session_drop),
++        )
++        for widget, handler in mapping:
+             if hasattr(widget, "drop_target_register"):
+                 widget.drop_target_register(DND_FILES)
+-                widget.dnd_bind("<<Drop>>", self._on_import_drop)
++                widget.dnd_bind("<<Drop>>", handler)
+ 
+-    def request_code(self) -> None:
+-        phone = self.phone_var.get().strip()
+-        future = self.worker.submit(self.backend.request_code(phone))
+-        self._watch_future(future, self._on_auth_result, action_name="Запрос кода")
++    def browse_session_file(self) -> None:
++        path = filedialog.askopenfilename(
++            title="Выберите .session файл",
++            filetypes=[("Telethon Session", "*.session")],
++        )
++        if path:
++            self.session_file_var.set(str(Path(path).resolve()))
++            self._append_log(f"Выбран session-файл: {path}")
+ 
+-    def sign_in(self) -> None:
+-        future = self.worker.submit(self.backend.sign_in(self.code_var.get(), self.password_var.get()))
+-        self._watch_future(future, self._on_auth_result, action_name="Вход")
++    def connect_session(self) -> None:
++        source = self.session_file_var.get().strip()
++        if not source:
++            raise_message("Сначала выберите .session файл.")
++            return
++
++        overwrite = messagebox.askyesno(
++            "Импорт session",
++            "Если файл с таким именем уже есть в data/sessions, перезаписать его?\n"
++            "Нажмите 'Нет', чтобы сохранить с безопасным новым именем.",
++        )
++
++        future = self.worker.submit(self.backend.import_and_connect_session(source, overwrite=overwrite))
++        self._watch_future(future, self._on_auth_result, action_name="Подключение session")
++
++    def disconnect_session(self) -> None:
++        future = self.worker.submit(self.backend.disconnect_session())
++        self._watch_future(future, self._on_auth_result, action_name="Отключение session")
+ 
+     def check_session(self) -> None:
+         future = self.worker.submit(self.backend.check_session())
+         self._watch_future(future, self._on_auth_result, action_name="Проверка session")
+ 
+     def load_dialogs(self) -> None:
+         future = self.worker.submit(self.backend.get_dialogs())
+         self._watch_future(future, self._on_dialogs_loaded, action_name="Загрузка диалогов")
+ 
+     def browse_import_file(self) -> None:
+         path = filedialog.askopenfilename(
+             title="Выбери CSV или JSON",
+             filetypes=[
+                 ("CSV / JSON", "*.csv *.json"),
+                 ("CSV", "*.csv"),
+                 ("JSON", "*.json"),
+                 ("All files", "*.*"),
+             ],
+         )
+         if path:
+             self.file_var.set(path)
+             self._append_log(f"Выбран файл: {path}")
+ 
+     def preview_import_file(self) -> None:
+         file_path = self._require_file_path()
+@@ -426,53 +466,58 @@ class TelegramManagerGui:
+         self._append_log(f"{action_name}...")
+ 
+         def _done_callback(done_future: Future[object]) -> None:
+             self.root.after(0, self._handle_future_result, done_future, on_success, action_name)
+ 
+         future.add_done_callback(_done_callback)
+ 
+     def _handle_future_result(self, future: Future[object], on_success, action_name: str) -> None:
+         try:
+             result = future.result()
+         except Exception as exc:
+             self.status_var.set(f"Ошибка: {action_name}")
+             self.logger.exception("GUI action failed: %s", action_name)
+             self._append_log(f"Ошибка в операции '{action_name}': {exc}")
+             details = "".join(traceback.format_exception(exc))
+             self._append_log(details.strip())
+             messagebox.showerror("Ошибка", str(exc))
+             return
+ 
+         self.status_var.set(f"Готово: {action_name}")
+         on_success(result)
+ 
+     def _on_auth_result(self, result: AuthResult) -> None:
+         self.auth_info_var.set(result.message)
+         self._append_log(result.message)
++        self._sync_session_state()
++
+         if result.status == "authorized":
++            self.session_status_var.set("Подключено")
+             details = f"user_id={result.user_id} username={result.username or '-'}"
+             self._append_log(details)
++        elif result.status == "disconnected":
++            self.session_status_var.set("Отключено")
+ 
+     def _on_dialogs_loaded(self, dialogs: list[DialogInfo]) -> None:
+         self.dialogs = dialogs
+         self._render_dialogs()
+         self._append_log(f"Загружено диалогов: {len(dialogs)}")
+ 
+     def _render_dialogs(self) -> None:
+         search = self.search_var.get().strip().lower()
+         current_selection = self.dialog_tree.selection()
+         selected_id = int(current_selection[0]) if current_selection else None
+ 
+         for item in self.dialog_tree.get_children():
+             self.dialog_tree.delete(item)
+ 
+         visible_count = 0
+         for dialog in self.dialogs:
+             haystack = f"{dialog.title} {dialog.username or ''} {dialog.id}".lower()
+             if search and search not in haystack:
+                 continue
+             self.dialog_tree.insert(
+                 "",
+                 "end",
+                 iid=str(dialog.id),
+                 values=(dialog.id, dialog.title, dialog.entity_type, dialog.username or ""),
+             )
+@@ -589,83 +634,110 @@ class TelegramManagerGui:
+         if dialog is None:
+             raise_message("Сначала выбери чат в таблице диалогов.")
+             return None
+         return dialog
+ 
+     def _require_file_path(self) -> str | None:
+         file_path = self.file_var.get().strip()
+         if not file_path:
+             raise_message("Сначала выбери CSV / JSON файл.")
+             return None
+         return file_path
+ 
+     def _on_import_drop(self, event: tk.Event) -> None:
+         paths = self.root.tk.splitlist(event.data)
+         if not paths:
+             return
+ 
+         file_path = Path(paths[0])
+         if file_path.suffix.lower() not in {".csv", ".json"}:
+             raise_message("Нужен CSV или JSON файл.")
+             return
+ 
+         self.file_var.set(str(file_path))
+         self._append_log(f"Файл добавлен drag-and-drop: {file_path}")
+ 
++    def _on_session_drop(self, event: tk.Event) -> None:
++        paths = self.root.tk.splitlist(event.data)
++        if not paths:
++            return
++
++        file_path = Path(paths[0]).expanduser().resolve()
++        if file_path.suffix.lower() != ".session":
++            raise_message("Нужен .session файл.")
++            return
++        if not file_path.exists() or not file_path.is_file():
++            raise_message(f"Session-файл не найден: {file_path}")
++            return
++
++        self.session_file_var.set(str(file_path))
++        self._append_log(f"Session-файл добавлен drag-and-drop: {file_path}")
++
++    def _sync_session_state(self) -> None:
++        active = self.backend.active_session_path
++        if active is None:
++            self.session_status_var.set("Отключено")
++            if not self.session_file_var.get().strip():
++                self.session_file_var.set("Не выбран")
++            return
++
++        self.session_file_var.set(str(active))
++        self.session_status_var.set("Подключено (сохранено)")
++
+     def _append_log(self, text: str) -> None:
+         self.log_text.configure(state="normal")
+         self.log_text.insert("end", text.rstrip() + "\n")
+         self.log_text.see("end")
+         self.log_text.configure(state="disabled")
+ 
+     def on_close(self) -> None:
+         try:
+             self.worker.submit(self.backend.disconnect()).result(timeout=10)
+         except Exception:
+             self.logger.exception("Ошибка при отключении клиента")
+         finally:
+             self.worker.stop()
+             self.root.destroy()
+ 
+ 
+ def raise_message(text: str) -> None:
+     messagebox.showwarning("Внимание", text)
+ 
+ 
+ class MissingConfigWindow:
+     def __init__(self, root: tk.Tk, error: Exception) -> None:
+         root.title("Telegram Manager Desktop")
+         root.geometry("780x420")
+         frame = ttk.Frame(root, padding=16)
+         frame.pack(fill="both", expand=True)
+ 
+-        ttk.Label(frame, text="Не удалось загрузить config/.env", font=("Segoe UI", 14, "bold")).pack(anchor="w")
++        ttk.Label(frame, text="Не удалось загрузить внутреннюю конфигурацию", font=("Segoe UI", 14, "bold")).pack(anchor="w")
+         ttk.Label(
+             frame,
+             text=(
+-                "Скопируй .env.example в config/.env и заполни API_ID / API_HASH.\n"
+-                "После этого перезапусти приложение."
++                "Для запуска нужен файл config/.env с API_ID и API_HASH (внутренний уровень).\n"
++                "Пользовательский вход в GUI выполняется через импорт .session файла."
+             ),
+             justify="left",
+         ).pack(anchor="w", pady=(10, 0))
+ 
+         text = ScrolledText(frame, height=14, wrap="word")
+         text.pack(fill="both", expand=True, pady=(14, 0))
+         text.insert("1.0", str(error))
+         text.configure(state="disabled")
+ 
+ 
+ def main() -> None:
+     root = TkinterDnD.Tk()
+     root.option_add("*Font", "Segoe UI 10")
+     try:
+         settings = Settings.load()
+     except ConfigError as exc:
+         MissingConfigWindow(root, exc)
+         root.mainloop()
+         return
+ 
+     app = TelegramManagerGui(root, settings=settings)
+     root.mainloop()
+ 
+ 
+ if __name__ == "__main__":
