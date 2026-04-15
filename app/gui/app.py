@@ -38,7 +38,13 @@ except ImportError:  # pragma: no cover - fallback for environments without tkin
 class ClipboardShortcutManager:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-
+        self._context_widget: tk.Misc | None = None
+        self._context_menu = tk.Menu(self.root, tearoff=False)
+        self._context_menu.add_command(label="Копировать", command=self._copy_from_menu)
+        self._context_menu.add_command(label="Вырезать", command=self._cut_from_menu)
+        self._context_menu.add_command(label="Вставить", command=self._paste_from_menu)
+        self._context_menu.add_separator()
+        self._context_menu.add_command(label="Выделить всё", command=self._select_all_from_menu)
     def install(self) -> None:
         bindings = (
             ("<Control-c>", self._copy),
@@ -63,6 +69,8 @@ class ClipboardShortcutManager:
         # Keyboard shortcuts with non-latin layouts (e.g. Russian).
         self.root.bind_all("<Control-KeyPress>", self._handle_ctrl_keypress, add="+")
         self.root.bind_all("<Command-KeyPress>", self._handle_ctrl_keypress, add="+")
+        self.root.bind_all("<Button-3>", self._show_context_menu, add="+")
+        self.root.bind_all("<Control-Button-1>", self._show_context_menu, add="+")
 
     def _handle_ctrl_keypress(self, event: tk.Event) -> str | None:
         key = str(getattr(event, "keysym", "")).lower()
@@ -85,6 +93,83 @@ class ClipboardShortcutManager:
         if widget in {None, self.root}:
             return None
         return widget
+
+    def _show_context_menu(self, event: tk.Event) -> str | None:
+        widget = getattr(event, "widget", None)
+        if widget is None:
+            return None
+        try:
+            widget.focus_set()
+        except tk.TclError:
+            return None
+
+        self._context_widget = widget
+        self._sync_context_menu_state(widget)
+        try:
+            self._context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self._context_menu.grab_release()
+        return "break"
+
+    def _sync_context_menu_state(self, widget: tk.Misc) -> None:
+        can_copy = self._supports_copy(widget)
+        can_paste = self._supports_paste(widget)
+        can_cut = self._supports_cut(widget)
+        can_select_all = self._supports_select_all(widget)
+
+        self._context_menu.entryconfigure("Копировать", state="normal" if can_copy else "disabled")
+        self._context_menu.entryconfigure("Вырезать", state="normal" if can_cut else "disabled")
+        self._context_menu.entryconfigure("Вставить", state="normal" if can_paste else "disabled")
+        self._context_menu.entryconfigure("Выделить всё", state="normal" if can_select_all else "disabled")
+
+    def _menu_event(self) -> tk.Event:
+        event = tk.Event()
+        event.widget = self._context_widget
+        return event
+
+    def _copy_from_menu(self) -> str | None:
+        if self._context_widget is None:
+            return None
+        return self._copy(self._menu_event())
+
+    def _paste_from_menu(self) -> str | None:
+        if self._context_widget is None:
+            return None
+        return self._paste(self._menu_event())
+
+    def _cut_from_menu(self) -> str | None:
+        if self._context_widget is None:
+            return None
+        return self._cut(self._menu_event())
+
+    def _select_all_from_menu(self) -> str | None:
+        if self._context_widget is None:
+            return None
+        return self._select_all(self._menu_event())
+
+    @staticmethod
+    def _is_text_like(widget: tk.Misc) -> bool:
+        return isinstance(widget, (tk.Entry, ttk.Entry, ttk.Combobox, tk.Spinbox, tk.Text, ScrolledText))
+
+    @staticmethod
+    def _is_editable(widget: tk.Misc) -> bool:
+        try:
+            return str(widget.cget("state")) not in {"disabled", "readonly"}
+        except tk.TclError:
+            return True
+
+    def _supports_copy(self, widget: tk.Misc) -> bool:
+        return isinstance(widget, (ttk.Treeview, ttk.Label, tk.Label)) or self._is_text_like(widget)
+
+    def _supports_paste(self, widget: tk.Misc) -> bool:
+        return self._is_text_like(widget) and self._is_editable(widget)
+
+    def _supports_cut(self, widget: tk.Misc) -> bool:
+        return self._is_text_like(widget) and self._is_editable(widget)
+
+    def _supports_select_all(self, widget: tk.Misc) -> bool:
+        return isinstance(widget, ttk.Treeview) or self._is_text_like(widget)
+
 
     def _copy(self, event: tk.Event) -> str | None:
         widget = self._focused_widget(event)
@@ -952,16 +1037,15 @@ class MainMenuWindow:
         frame.rowconfigure(2, weight=1)
 
         ttk.Label(frame, text="Рассылка из чата", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, sticky="w")
-        ttk.Label(
+        self._add_selectable_note(
             frame,
-            text=(
+            (
                 "Создай run для пересылки/копирования сообщений из исходного чата в целевые чаты.\n"
                 "Режим all_to_all: каждый Message ID отправляется в каждый Target chat.\n"
                 "Message IDs можно вставлять числами или ссылками на сообщения."
             ),
-            foreground="#555555",
-            justify="left",
-        ).grid(row=1, column=0, sticky="w", pady=(8, 10))
+            grid={"row": 1, "column": 0, "sticky": "ew", "pady": (8, 10)},
+        )
 
         config_box = ttk.LabelFrame(frame, text="Параметры запуска", padding=10)
         config_box.grid(row=2, column=0, sticky="ew")
