@@ -51,10 +51,31 @@ class ClipboardShortcutManager:
             ("<Control-Insert>", self._copy),
             ("<Shift-Insert>", self._paste),
             ("<Shift-Delete>", self._cut),
+            ("<Command-c>", self._copy),
+            ("<Command-v>", self._paste),
+            ("<Command-x>", self._cut),
+            ("<Command-a>", self._select_all),
         )
         for sequence, handler in bindings:
             self.root.bind_all(sequence, handler, add="+")
 
+        # Keyboard shortcuts with non-latin layouts (e.g. Russian).
+        self.root.bind_all("<Control-KeyPress>", self._handle_ctrl_keypress, add="+")
+        self.root.bind_all("<Command-KeyPress>", self._handle_ctrl_keypress, add="+")
+
+    def _handle_ctrl_keypress(self, event: tk.Event) -> str | None:
+        key = str(getattr(event, "keysym", "")).lower()
+        # Support shortcuts on Cyrillic layout: c=с, v=м, x=ч, a=ф.
+        if key in {"c", "с"}:
+            return self._copy(event)
+        if key in {"v", "м"}:
+            return self._paste(event)
+        if key in {"x", "ч"}:
+            return self._cut(event)
+        if key in {"a", "ф"}:
+            return self._select_all(event)
+        return None
+        
     def _focused_widget(self, event: tk.Event) -> tk.Misc | None:
         focused = self.root.focus_get()
         if focused is not None:
