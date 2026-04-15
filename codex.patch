@@ -1,58 +1,77 @@
  (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
 diff --git a/setup_windows.bat b/setup_windows.bat
-index 07894522d401398181986509f006a5835f1756f1..c38bd51bc8ea4e5e46371f0791cc7f5f7f16a061 100644
+index e294154a00fd84d8f1c8957a5c45245304a74c39..d1c4f6149aacabb819d83f27bd798a29d8ed6094 100644
 --- a/setup_windows.bat
 +++ b/setup_windows.bat
-@@ -1,34 +1,69 @@
+@@ -1,69 +1,81 @@
  @echo off
  setlocal
  
  cd /d "%~dp0"
  
-+set "PYTHON_CMD="
-+
-+where py >nul 2>&1
-+if not errorlevel 1 (
-+    py -3.11 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
-+    if not errorlevel 1 (
-+        set "PYTHON_CMD=py -3.11"
-+    )
-+)
-+
-+if not defined PYTHON_CMD (
-+    where py >nul 2>&1
-+    if not errorlevel 1 (
-+        py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
-+        if not errorlevel 1 (
-+            set "PYTHON_CMD=py -3"
-+        )
-+    )
-+)
-+
-+if not defined PYTHON_CMD (
-+    python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
-+    if not errorlevel 1 (
-+        set "PYTHON_CMD=python"
-+    )
-+)
-+
-+if not defined PYTHON_CMD (
-+    echo Python 3.11+ was not found.
-+    echo Install Python 3.11+ from https://www.python.org/downloads/windows/
-+    echo Make sure "Add python.exe to PATH" is enabled during install.
-+    pause
-+    exit /b 1
-+)
-+
+ set "PYTHON_CMD="
+ 
+ where py >nul 2>&1
+ if not errorlevel 1 (
+     py -3.11 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
+-    if not errorlevel 1 (
+-        set "PYTHON_CMD=py -3.11"
+-    )
++    if not errorlevel 1 set "PYTHON_CMD=py -3.11"
+ )
+ 
+ if not defined PYTHON_CMD (
+     where py >nul 2>&1
+     if not errorlevel 1 (
+         py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
+-        if not errorlevel 1 (
+-            set "PYTHON_CMD=py -3"
+-        )
++        if not errorlevel 1 set "PYTHON_CMD=py -3"
+     )
+ )
+ 
+ if not defined PYTHON_CMD (
+     python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
+-    if not errorlevel 1 (
+-        set "PYTHON_CMD=python"
+-    )
++    if not errorlevel 1 set "PYTHON_CMD=python"
+ )
+ 
+ if not defined PYTHON_CMD (
+     echo Python 3.11+ was not found.
+     echo Install Python 3.11+ from https://www.python.org/downloads/windows/
+     echo Make sure "Add python.exe to PATH" is enabled during install.
+     pause
+     exit /b 1
+ )
+ 
  if not exist ".venv\Scripts\python.exe" (
--    py -3.11 -m venv .venv
-+    %PYTHON_CMD% -m venv .venv
+     %PYTHON_CMD% -m venv .venv
      if errorlevel 1 (
--        echo Failed to create virtual environment with Python 3.11.
-+        echo Failed to create virtual environment with Python 3.11+.
-         echo Install Python 3.11+ and re-run setup_windows.bat.
-         pause
-         exit /b 1
+-        echo Failed to create virtual environment with Python 3.11+.
+-        echo Install Python 3.11+ and re-run setup_windows.bat.
+-        pause
+-        exit /b 1
++        echo Failed to create virtual environment with %PYTHON_CMD%.
++        echo Trying fallback launchers...
++
++        if /I not "%PYTHON_CMD%"=="py -3" (
++            py -3 -m venv .venv >nul 2>&1
++        )
++
++        if not exist ".venv\Scripts\python.exe" (
++            python -m venv .venv >nul 2>&1
++        )
++
++        if not exist ".venv\Scripts\python.exe" (
++            echo Failed to create virtual environment with Python 3.11+.
++            echo Install Python 3.11+ and re-run setup_windows.bat.
++            echo If py.exe prints "No suitable Python runtime found", install Python first.
++            pause
++            exit /b 1
++        )
      )
  )
  
@@ -74,7 +93,13 @@ index 07894522d401398181986509f006a5835f1756f1..c38bd51bc8ea4e5e46371f0791cc7f5f
  if errorlevel 1 (
      echo Failed to install requirements.
      pause
-     exit /b 1
+-    exit /b 1
+\ No newline at end of file
++    exit /b 1
++)
++
++echo Setup completed successfully.
++pause
  
 EOF
 )

@@ -8,26 +8,20 @@ set "PYTHON_CMD="
 where py >nul 2>&1
 if not errorlevel 1 (
     py -3.11 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
-    if not errorlevel 1 (
-        set "PYTHON_CMD=py -3.11"
-    )
+    if not errorlevel 1 set "PYTHON_CMD=py -3.11"
 )
 
 if not defined PYTHON_CMD (
     where py >nul 2>&1
     if not errorlevel 1 (
         py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
-        if not errorlevel 1 (
-            set "PYTHON_CMD=py -3"
-        )
+        if not errorlevel 1 set "PYTHON_CMD=py -3"
     )
 )
 
 if not defined PYTHON_CMD (
     python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
-    if not errorlevel 1 (
-        set "PYTHON_CMD=python"
-    )
+    if not errorlevel 1 set "PYTHON_CMD=python"
 )
 
 if not defined PYTHON_CMD (
@@ -41,10 +35,24 @@ if not defined PYTHON_CMD (
 if not exist ".venv\Scripts\python.exe" (
     %PYTHON_CMD% -m venv .venv
     if errorlevel 1 (
-        echo Failed to create virtual environment with Python 3.11+.
-        echo Install Python 3.11+ and re-run setup_windows.bat.
-        pause
-        exit /b 1
+        echo Failed to create virtual environment with %PYTHON_CMD%.
+        echo Trying fallback launchers...
+
+        if /I not "%PYTHON_CMD%"=="py -3" (
+            py -3 -m venv .venv >nul 2>&1
+        )
+
+        if not exist ".venv\Scripts\python.exe" (
+            python -m venv .venv >nul 2>&1
+        )
+
+        if not exist ".venv\Scripts\python.exe" (
+            echo Failed to create virtual environment with Python 3.11+.
+            echo Install Python 3.11+ and re-run setup_windows.bat.
+            echo If py.exe prints "No suitable Python runtime found", install Python first.
+            pause
+            exit /b 1
+        )
     )
 )
 
@@ -67,3 +75,7 @@ if errorlevel 1 (
     echo Failed to install requirements.
     pause
     exit /b 1
+)
+
+echo Setup completed successfully.
+pause
