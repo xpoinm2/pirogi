@@ -18,6 +18,8 @@ Desktop application and CLI project for Telegram management through a **personal
 - File + console logs
 - `FloodWait` retry handling
 - Dry-run mode
+- Relay campaign: forward/copy source messages into different chats with random delays
+- Relay run persistence in SQLite with pause/resume/status
 - CLI remains available for automation / fallback
 
 ## Project structure
@@ -183,6 +185,24 @@ python run.py list-scheduled --chat-id 123456789
 python run.py cancel --chat-id 123456789 --message-ids 101 102 103
 ```
 
+### Start relay campaign
+
+```bash
+python run.py relay-start \
+  --source-chat-id -1001234567890 \
+  --plan-file sample_relay_plan.csv \
+  --delay-min 180 \
+  --delay-max 360
+```
+
+### Relay status / pause / resume
+
+```bash
+python run.py relay-status --run-id 1
+python run.py relay-pause --run-id 1
+python run.py relay-resume --run-id 1
+```
+
 ## Windows quick start
 
 ```bat
@@ -198,3 +218,4 @@ run_gui.bat
 - Scheduling is done sequentially on purpose, to keep behavior predictable and logs clean.
 - The project stores an audit trail locally in SQLite even when remote Telegram state later changes.
 - The GUI and CLI use the same Telethon session and the same SQLite database.
+- Relay run first tries `forward_messages(..., drop_author=True)` and falls back to copy-send.

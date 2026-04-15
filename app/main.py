@@ -14,6 +14,12 @@ from app.services.scheduler_service import (
     mass_schedule_messages,
     preview_import,
 )
+from app.services.relay_service import (
+    build_relay_tasks,
+    pause_relay_run,
+    process_relay_run,
+    resume_relay_run,
+)
 from app.settings import Settings
 from app.telegram.auth import ensure_authorized
 from app.telegram.chats import list_dialogs
@@ -58,6 +64,41 @@ def build_parser() -> argparse.ArgumentParser:
     preview_parser = subparsers.add_parser("preview-import", help="Validate import file and preview rows")
     preview_parser.add_argument("--file", required=True, help="Path to CSV or JSON file")
 
+    relay_parser = subparsers.add_parser("relay-start", help="Forward/copy messages to target chats with random delays")
+    relay_parser.add_argument("--source-chat-id", type=int, required=True, help="Source chat id where messages live")
+    relay_parser.add_argument(
+        "--message-ids",
+        type=int,
+        nargs="+",
+        help="Source message ids in order (for all_to_all or manual one_to_one)",
+    )
+    relay_parser.add_argument(
+        "--target-chat-ids",
+        type=int,
+        nargs="+",
+        help="Target chat ids (for all_to_all or manual one_to_one)",
+    )
+    relay_parser.add_argument(
+        "--plan-file",
+        help="CSV/JSON with message_id,target_chat_id (for one_to_one mode)",
+    )
+    relay_parser.add_argument("--mode", choices=["one_to_one", "all_to_all"], default="one_to_one")
+    relay_parser.add_argument("--delay-min", type=int, default=180, help="Minimum delay in seconds")
+    relay_parser.add_argument("--delay-max", type=int, default=360, help="Maximum delay in seconds")
+    relay_parser.add_argument("--long-pause-every", type=int, default=20, help="Long pause every N sent messages")
+    relay_parser.add_argument("--long-pause-min", type=int, default=300, help="Min long pause in seconds")
+    relay_parser.add_argument("--long-pause-max", type=int, default=600, help="Max long pause in seconds")
+    relay_parser.add_argument("--dry-run", action="store_true", help="Create run and mark tasks as skipped")
+
+    relay_status_parser = subparsers.add_parser("relay-status", help="Show relay run summary")
+    relay_status_parser.add_argument("--run-id", type=int, required=True, help="Relay run id")
+
+    relay_pause_parser = subparsers.add_parser("relay-pause", help="Pause relay run")
+    relay_pause_parser.add_argument("--run-id", type=int, required=True, help="Relay run id")
+
+    relay_resume_parser = subparsers.add_parser("relay-resume", help="Resume relay run")
+    relay_resume_parser.add_argument("--run-id", type=int, required=True, help="Relay run id")
+
     return parser
 
 
@@ -83,6 +124,19 @@ async def async_main() -> int:
             print(f"Файл валиден. Сообщений: {len(items)}")
             for line in preview_import(items):
                 print("  ", line)
+            return 0
+        if command == "relay-status":
+            summary = db.relay_run_summary(args.run_id)
+            if summary is None:
+                raise ValidationError(f"Relay run #{args.run_id} не найден")
+            print(
+                f"run_id={summary['id']} status={summary['status']} total={summary['total_tasks']} "
+                f"sent={summary['sent_tasks']} failed={summary['failed_tasks']} skipped={summary['skipped_tasks']}"
+            )
+            return 0
+        if command == "relay-pause":
+            pause_relay_run(db, args.run_id)
+            print(f"Relay run #{args.run_id} поставлен на паузу")
             return 0
     except (AppError, ValidationError) as exc:
         print(f"Ошибка: {exc}")
@@ -200,6 +254,84 @@ async def async_main() -> int:
             )
             print("Сообщения отменены.")
             return 0
+
+        if command == "relay-start":
+            if args.delay_min <= 0 or args.delay_max <= 0 or args.delay_min > args.delay_max:
+                raise ValidationError("delay-min/delay-max заданы некорректно")
+            if args.long_pause_every < 0:
+                raise ValidationError("long-pause-every не может быть отрицательным")
+            if args.long_pause_every > 0 and (
+                args.long_pause_min <= 0
+                or args.long_pause_max <= 0
+                or args.long_pause_min > args.long_pause_max
+            ):
+                raise ValidationError("long-pause-min/max заданы некорректно")
+
+            if args.plan_file:
+                from app.importers import load_relay_plan
+
+                pairs = load_relay_plan(Path(args.plan_file))
+                source_ids = [item[0] for item in pairs]
+                target_ids = [item[1] for item in pairs]
+                mode = "one_to_one"
+            else:
+                if not args.message_ids or not args.target_chat_ids:
+                    raise ValidationError(
+                        "Для relay-start передайте --plan-file либо оба списка --message-ids и --target-chat-ids"
+                    )
+                source_ids = args.message_ids
+                target_ids = args.target_chat_ids
+                mode = args.mode
+
+            tasks = build_relay_tasks(
+                mode=mode,
+                source_chat_id=args.source_chat_id,
+                source_message_ids=source_ids,
+                target_chat_ids=target_ids,
+            )
+            run_id = db.create_relay_run(
+                mode=mode,
+                source_chat_id=args.source_chat_id,
+                total_tasks=len(tasks),
+                delay_min_seconds=args.delay_min,
+                delay_max_seconds=args.delay_max,
+                long_pause_every=args.long_pause_every,
+                long_pause_min_seconds=args.long_pause_min,
+                long_pause_max_seconds=args.long_pause_max,
+                dry_run=args.dry_run,
+            )
+            db.add_relay_tasks(
+                run_id,
+                [(index, args.source_chat_id, msg_id, target_chat_id) for index, msg_id, target_chat_id in tasks],
+            )
+            print(f"Relay run created: #{run_id}, tasks={len(tasks)}, mode={mode}, dry_run={args.dry_run}")
+            summary = await process_relay_run(
+                client,
+                db=db,
+                logger=logger,
+                run_id=run_id,
+                max_attempts=settings.max_retries,
+            )
+            print(
+                f"Relay done: run_id={summary['id']} status={summary['status']} total={summary['total_tasks']} "
+                f"sent={summary['sent_tasks']} failed={summary['failed_tasks']} skipped={summary['skipped_tasks']}"
+            )
+            return 0 if int(summary["failed_tasks"]) == 0 else 1
+
+        if command == "relay-resume":
+            resume_relay_run(db, args.run_id)
+            summary = await process_relay_run(
+                client,
+                db=db,
+                logger=logger,
+                run_id=args.run_id,
+                max_attempts=settings.max_retries,
+            )
+            print(
+                f"Relay done: run_id={summary['id']} status={summary['status']} total={summary['total_tasks']} "
+                f"sent={summary['sent_tasks']} failed={summary['failed_tasks']} skipped={summary['skipped_tasks']}"
+            )
+            return 0 if int(summary["failed_tasks"]) == 0 else 1
 
         menu = ConsoleMenu(client=client, db=db, settings=settings, logger=logger)
         await menu.run()

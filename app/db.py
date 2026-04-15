@@ -80,6 +80,58 @@ class Database:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS relay_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mode TEXT NOT NULL,
+                    source_chat_id INTEGER NOT NULL,
+                    total_tasks INTEGER NOT NULL,
+                    delay_min_seconds INTEGER NOT NULL,
+                    delay_max_seconds INTEGER NOT NULL,
+                    long_pause_every INTEGER NOT NULL DEFAULT 0,
+                    long_pause_min_seconds INTEGER NOT NULL DEFAULT 0,
+                    long_pause_max_seconds INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    dry_run INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    CHECK(status IN ('pending', 'in_progress', 'paused', 'completed', 'failed'))
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS relay_tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id INTEGER NOT NULL,
+                    task_index INTEGER NOT NULL,
+                    source_chat_id INTEGER NOT NULL,
+                    source_message_id INTEGER NOT NULL,
+                    target_chat_id INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    external_message_id INTEGER,
+                    error_message TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES relay_runs(id) ON DELETE CASCADE,
+                    CHECK(status IN ('pending', 'in_progress', 'sent', 'failed', 'skipped'))
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_relay_tasks_unique
+                ON relay_tasks(run_id, task_index)
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_relay_tasks_run_status
+                ON relay_tasks(run_id, status, task_index)
+                """
+            )
+            conn.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_accounts_status
                 ON accounts(status, updated_at)
                 """
@@ -253,3 +305,175 @@ class Database:
         with self.connect() as conn:
             rows = conn.execute(query, params).fetchall()
         return rows
+
+    def create_relay_run(
+        self,
+        *,
+        mode: str,
+        source_chat_id: int,
+        total_tasks: int,
+        delay_min_seconds: int,
+        delay_max_seconds: int,
+        long_pause_every: int,
+        long_pause_min_seconds: int,
+        long_pause_max_seconds: int,
+        dry_run: bool,
+    ) -> int:
+        now = _to_iso(datetime.now(UTC))
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO relay_runs (
+                    mode,
+                    source_chat_id,
+                    total_tasks,
+                    delay_min_seconds,
+                    delay_max_seconds,
+                    long_pause_every,
+                    long_pause_min_seconds,
+                    long_pause_max_seconds,
+                    status,
+                    dry_run,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+                """,
+                (
+                    mode,
+                    source_chat_id,
+                    total_tasks,
+                    delay_min_seconds,
+                    delay_max_seconds,
+                    long_pause_every,
+                    long_pause_min_seconds,
+                    long_pause_max_seconds,
+                    int(dry_run),
+                    now,
+                    now,
+                ),
+            )
+            return int(cursor.lastrowid)
+
+    def add_relay_tasks(self, run_id: int, tasks: list[tuple[int, int, int, int]]) -> None:
+        now = _to_iso(datetime.now(UTC))
+        with self.connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO relay_tasks (
+                    run_id,
+                    task_index,
+                    source_chat_id,
+                    source_message_id,
+                    target_chat_id,
+                    status,
+                    attempts,
+                    external_message_id,
+                    error_message,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'pending', 0, NULL, NULL, ?, ?)
+                """,
+                [(run_id, idx, src_chat, msg_id, target_id, now, now) for idx, src_chat, msg_id, target_id in tasks],
+            )
+
+    def get_relay_run(self, run_id: int) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute("SELECT * FROM relay_runs WHERE id = ?", (run_id,)).fetchone()
+
+    def update_relay_run_status(self, run_id: int, status: str) -> None:
+        now = _to_iso(datetime.now(UTC))
+        with self.connect() as conn:
+            conn.execute(
+                "UPDATE relay_runs SET status = ?, updated_at = ? WHERE id = ?",
+                (status, now, run_id),
+            )
+
+    def list_relay_tasks(self, run_id: int, *, statuses: tuple[str, ...] | None = None) -> list[sqlite3.Row]:
+        query = "SELECT * FROM relay_tasks WHERE run_id = ?"
+        params: list[object] = [run_id]
+        if statuses:
+            placeholders = ",".join("?" for _ in statuses)
+            query += f" AND status IN ({placeholders})"
+            params.extend(statuses)
+        query += " ORDER BY task_index ASC"
+        with self.connect() as conn:
+            return conn.execute(query, params).fetchall()
+
+    def mark_relay_task_started(self, task_id: int, attempts: int) -> None:
+        now = _to_iso(datetime.now(UTC))
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE relay_tasks
+                SET status = 'in_progress',
+                    attempts = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (attempts, now, task_id),
+            )
+
+    def mark_relay_task_sent(self, task_id: int, external_message_id: int | None) -> None:
+        now = _to_iso(datetime.now(UTC))
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE relay_tasks
+                SET status = 'sent',
+                    external_message_id = ?,
+                    error_message = NULL,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (external_message_id, now, task_id),
+            )
+
+    def mark_relay_task_failed(self, task_id: int, error_message: str) -> None:
+        now = _to_iso(datetime.now(UTC))
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE relay_tasks
+                SET status = 'failed',
+                    error_message = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (error_message, now, task_id),
+            )
+
+    def mark_relay_task_skipped(self, task_id: int, reason: str) -> None:
+        now = _to_iso(datetime.now(UTC))
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE relay_tasks
+                SET status = 'skipped',
+                    error_message = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (reason, now, task_id),
+            )
+
+    def relay_run_summary(self, run_id: int) -> dict[str, object] | None:
+        with self.connect() as conn:
+            run_row = conn.execute("SELECT * FROM relay_runs WHERE id = ?", (run_id,)).fetchone()
+            if run_row is None:
+                return None
+            counters = conn.execute(
+                """
+                SELECT
+                    SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS sent_tasks,
+                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_tasks,
+                    SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END) AS skipped_tasks
+                FROM relay_tasks
+                WHERE run_id = ?
+                """,
+                (run_id,),
+            ).fetchone()
+            result = dict(run_row)
+            result["sent_tasks"] = int(counters["sent_tasks"] or 0)
+            result["failed_tasks"] = int(counters["failed_tasks"] or 0)
+            result["skipped_tasks"] = int(counters["skipped_tasks"] or 0)
+            return result

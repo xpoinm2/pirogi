@@ -65,3 +65,41 @@ class ScheduleBatchResult:
     @property
     def ok(self) -> bool:
         return self.failed == 0
+
+
+@dataclass(slots=True)
+class RelayTask:
+    run_id: int
+    task_index: int
+    source_chat_id: int
+    source_message_id: int
+    target_chat_id: int
+    status: str = "pending"
+    attempts: int = 0
+    external_message_id: int | None = None
+    error_message: str | None = None
+
+
+@dataclass(slots=True)
+class RelayRun:
+    id: int
+    mode: str
+    source_chat_id: int
+    total_tasks: int
+    delay_min_seconds: int
+    delay_max_seconds: int
+    long_pause_every: int
+    long_pause_min_seconds: int
+    long_pause_max_seconds: int
+    status: str
+    dry_run: bool
+
+
+@dataclass(slots=True)
+class RelayRunSummary:
+    run_id: int
+    total_tasks: int
+    sent_tasks: int
+    failed_tasks: int
+    skipped_tasks: int
+    status: str

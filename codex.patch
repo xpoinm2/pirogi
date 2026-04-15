@@ -1,105 +1,14 @@
  (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
-diff --git a/setup_windows.bat b/setup_windows.bat
-index e294154a00fd84d8f1c8957a5c45245304a74c39..d1c4f6149aacabb819d83f27bd798a29d8ed6094 100644
---- a/setup_windows.bat
-+++ b/setup_windows.bat
-@@ -1,69 +1,81 @@
- @echo off
- setlocal
- 
- cd /d "%~dp0"
- 
- set "PYTHON_CMD="
- 
- where py >nul 2>&1
- if not errorlevel 1 (
-     py -3.11 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
--    if not errorlevel 1 (
--        set "PYTHON_CMD=py -3.11"
--    )
-+    if not errorlevel 1 set "PYTHON_CMD=py -3.11"
- )
- 
- if not defined PYTHON_CMD (
-     where py >nul 2>&1
-     if not errorlevel 1 (
-         py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
--        if not errorlevel 1 (
--            set "PYTHON_CMD=py -3"
--        )
-+        if not errorlevel 1 set "PYTHON_CMD=py -3"
-     )
- )
- 
- if not defined PYTHON_CMD (
-     python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
--    if not errorlevel 1 (
--        set "PYTHON_CMD=python"
--    )
-+    if not errorlevel 1 set "PYTHON_CMD=python"
- )
- 
- if not defined PYTHON_CMD (
-     echo Python 3.11+ was not found.
-     echo Install Python 3.11+ from https://www.python.org/downloads/windows/
-     echo Make sure "Add python.exe to PATH" is enabled during install.
-     pause
-     exit /b 1
- )
- 
- if not exist ".venv\Scripts\python.exe" (
-     %PYTHON_CMD% -m venv .venv
-     if errorlevel 1 (
--        echo Failed to create virtual environment with Python 3.11+.
--        echo Install Python 3.11+ and re-run setup_windows.bat.
--        pause
--        exit /b 1
-+        echo Failed to create virtual environment with %PYTHON_CMD%.
-+        echo Trying fallback launchers...
-+
-+        if /I not "%PYTHON_CMD%"=="py -3" (
-+            py -3 -m venv .venv >nul 2>&1
-+        )
-+
-+        if not exist ".venv\Scripts\python.exe" (
-+            python -m venv .venv >nul 2>&1
-+        )
-+
-+        if not exist ".venv\Scripts\python.exe" (
-+            echo Failed to create virtual environment with Python 3.11+.
-+            echo Install Python 3.11+ and re-run setup_windows.bat.
-+            echo If py.exe prints "No suitable Python runtime found", install Python first.
-+            pause
-+            exit /b 1
-+        )
-     )
- )
- 
- call ".venv\Scripts\activate.bat"
- if errorlevel 1 (
-     echo Failed to activate virtual environment.
-     pause
-     exit /b 1
- )
- 
- python -m pip install --upgrade pip
- if errorlevel 1 (
-     echo Failed to upgrade pip.
-     pause
-     exit /b 1
- )
- 
- pip install -r requirements.txt
- if errorlevel 1 (
-     echo Failed to install requirements.
-     pause
--    exit /b 1
-\ No newline at end of file
-+    exit /b 1
-+)
-+
-+echo Setup completed successfully.
-+pause
+diff --git a/sample_relay_plan.csv b/sample_relay_plan.csv
+new file mode 100644
+index 0000000000000000000000000000000000000000..7f4ee1dc0e4c98288b2ca51f80bd7cdf796bf138
+--- /dev/null
++++ b/sample_relay_plan.csv
+@@ -0,0 +1,4 @@
++message_id,target_chat_id
++101,-1001111111111
++102,-1002222222222
++103,-1003333333333
  
 EOF
 )
