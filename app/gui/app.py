@@ -9,7 +9,6 @@ from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from app.db import Database
-from app.exceptions import ConfigError
 from app.gui.async_worker import AsyncWorker
 from app.gui.backend import AuthResult, TelegramManagerBackend
 from app.logging_setup import setup_logging
@@ -656,17 +655,42 @@ class MissingConfigWindow:
         text.configure(state="disabled")
 
 
+class MainMenuWindow:
+    def __init__(self, root: tk.Tk) -> None:
+        self.root = root
+        self.root.title("Telegram Manager Desktop")
+        self.root.geometry("1100x720")
+        self.root.minsize(900, 600)
+
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(0, weight=1)
+
+        notebook = ttk.Notebook(root)
+        notebook.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+
+        main_menu_tab = ttk.Frame(notebook, padding=16)
+        accounts_tab = ttk.Frame(notebook, padding=16)
+        notebook.add(main_menu_tab, text="Главное меню")
+        notebook.add(accounts_tab, text="Аккаунты")
+
+        ttk.Label(main_menu_tab, text="Главное меню", font=("Segoe UI", 16, "bold")).pack(anchor="w")
+        ttk.Label(
+            main_menu_tab,
+            text="Раздел готов к наполнению функциями.",
+            foreground="#555555",
+        ).pack(anchor="w", pady=(8, 0))
+
+        ttk.Label(accounts_tab, text="Аккаунты", font=("Segoe UI", 16, "bold")).pack(anchor="w")
+        ttk.Label(
+            accounts_tab,
+            text="Пока пусто — вкладка подготовлена для будущих функций.",
+            foreground="#555555",
+        ).pack(anchor="w", pady=(8, 0))
+
 def main() -> None:
     root = TkinterDnD.Tk()
     root.option_add("*Font", "{Segoe UI} 10")
-    try:
-        settings = Settings.load()
-    except ConfigError as exc:
-        MissingConfigWindow(root, exc)
-        root.mainloop()
-        return
-
-    app = TelegramManagerGui(root, settings=settings)
+    MainMenuWindow(root)
     root.mainloop()
 
 
