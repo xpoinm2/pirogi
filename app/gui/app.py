@@ -55,8 +55,17 @@ class ClipboardShortcutManager:
         for sequence, handler in bindings:
             self.root.bind_all(sequence, handler, add="+")
 
+    def _focused_widget(self, event: tk.Event) -> tk.Misc | None:
+        focused = self.root.focus_get()
+        if focused is not None:
+            return focused
+        widget = getattr(event, "widget", None)
+        if widget in {None, self.root}:
+            return None
+        return widget
+
     def _copy(self, event: tk.Event) -> str | None:
-        widget = event.widget or self.root.focus_get()
+        widget = self._focused_widget(event)
         if widget is None:
             return None
 
@@ -87,7 +96,7 @@ class ClipboardShortcutManager:
             return None
 
     def _paste(self, event: tk.Event) -> str | None:
-        widget = event.widget or self.root.focus_get()
+        widget = self._focused_widget(event)
         if widget is None:
             return None
         try:
@@ -97,7 +106,7 @@ class ClipboardShortcutManager:
             return None
 
     def _cut(self, event: tk.Event) -> str | None:
-        widget = event.widget or self.root.focus_get()
+        widget = self._focused_widget(event)
         if widget is None:
             return None
         try:
@@ -107,7 +116,7 @@ class ClipboardShortcutManager:
             return None
 
     def _select_all(self, event: tk.Event) -> str | None:
-        widget = event.widget or self.root.focus_get()
+        widget = self._focused_widget(event)
         if widget is None:
             return None
 
