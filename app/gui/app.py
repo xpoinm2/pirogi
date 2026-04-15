@@ -4,6 +4,7 @@ import traceback
 from concurrent.futures import Future
 from pathlib import Path
 import tkinter as tk
+from tkinter import font as tkfont
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
@@ -637,8 +638,9 @@ class MissingConfigWindow:
         root.geometry("780x420")
         frame = ttk.Frame(root, padding=16)
         frame.pack(fill="both", expand=True)
+        heading_font = tkfont.Font(root=root, family="Segoe UI", size=14, weight="bold")
 
-        ttk.Label(frame, text="Не удалось загрузить config/.env", font=("Segoe UI", 14, "bold")).pack(anchor="w")
+        ttk.Label(frame, text="Не удалось загрузить config/.env", font=heading_font).pack(anchor="w")
         ttk.Label(
             frame,
             text=(
@@ -656,7 +658,7 @@ class MissingConfigWindow:
 
 def main() -> None:
     root = TkinterDnD.Tk()
-    root.option_add("*Font", "Segoe UI 10")
+    root.option_add("*Font", "{Segoe UI} 10")
     try:
         settings = Settings.load()
     except ConfigError as exc:
