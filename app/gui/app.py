@@ -34,6 +34,103 @@ except ImportError:  # pragma: no cover - fallback for environments without tkin
         Tk = _FallbackTk
 
 
+class ClipboardShortcutManager:
+    def __init__(self, root: tk.Tk) -> None:
+        self.root = root
+
+    def install(self) -> None:
+        bindings = (
+            ("<Control-c>", self._copy),
+            ("<Control-C>", self._copy),
+            ("<Control-v>", self._paste),
+            ("<Control-V>", self._paste),
+            ("<Control-x>", self._cut),
+            ("<Control-X>", self._cut),
+            ("<Control-a>", self._select_all),
+            ("<Control-A>", self._select_all),
+            ("<Control-Insert>", self._copy),
+            ("<Shift-Insert>", self._paste),
+            ("<Shift-Delete>", self._cut),
+        )
+        for sequence, handler in bindings:
+            self.root.bind_all(sequence, handler, add="+")
+
+    def _copy(self, event: tk.Event) -> str | None:
+        widget = event.widget or self.root.focus_get()
+        if widget is None:
+            return None
+
+        if isinstance(widget, ttk.Treeview):
+            selected_rows = [
+                "\t".join(str(value) for value in widget.item(item_id, "values"))
+                for item_id in widget.selection()
+            ]
+            if not selected_rows:
+                return "break"
+            payload = "\n".join(selected_rows)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(payload)
+            return "break"
+
+        if isinstance(widget, (ttk.Label, tk.Label)):
+            text = str(widget.cget("text") or "").strip()
+            if text:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(text)
+                return "break"
+            return None
+
+        try:
+            widget.event_generate("<<Copy>>")
+            return "break"
+        except tk.TclError:
+            return None
+
+    def _paste(self, event: tk.Event) -> str | None:
+        widget = event.widget or self.root.focus_get()
+        if widget is None:
+            return None
+        try:
+            widget.event_generate("<<Paste>>")
+            return "break"
+        except tk.TclError:
+            return None
+
+    def _cut(self, event: tk.Event) -> str | None:
+        widget = event.widget or self.root.focus_get()
+        if widget is None:
+            return None
+        try:
+            widget.event_generate("<<Cut>>")
+            return "break"
+        except tk.TclError:
+            return None
+
+    def _select_all(self, event: tk.Event) -> str | None:
+        widget = event.widget or self.root.focus_get()
+        if widget is None:
+            return None
+
+        if isinstance(widget, (tk.Entry, ttk.Entry, ttk.Combobox, tk.Spinbox)):
+            widget.selection_range(0, "end")
+            widget.icursor("end")
+            return "break"
+
+        if isinstance(widget, (tk.Text, ScrolledText)):
+            widget.tag_add("sel", "1.0", "end-1c")
+            widget.mark_set("insert", "end-1c")
+            widget.see("insert")
+            return "break"
+
+        if isinstance(widget, ttk.Treeview):
+            children = widget.get_children()
+            if children:
+                widget.selection_set(children)
+                widget.focus(children[0])
+            return "break"
+
+        return None
+
 class TelegramManagerGui:
     def __init__(self, root: tk.Tk, *, settings: Settings) -> None:
         self.root = root
@@ -64,6 +161,7 @@ class TelegramManagerGui:
         self.root.minsize(1100, 720)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
+        ClipboardShortcutManager(self.root).install()
         self._build_ui()
         self._register_drop_targets()
         self._append_log(f"Session path: {self.settings.session_path}")
@@ -668,6 +766,7 @@ class MainMenuWindow:
         self.root.geometry("1100x720")
         self.root.minsize(900, 600)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        ClipboardShortcutManager(self.root).install()
         self.accounts_summary_var = tk.StringVar(value="Аккаунты ещё не добавлены.")
         self.total_accounts_var = tk.StringVar(value="0")
         self.live_accounts_var = tk.StringVar(value="0")
