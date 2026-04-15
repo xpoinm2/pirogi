@@ -1,8 +1,4 @@
-(cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
-diff --git a/run_gui.bat b/run_gui.bat
-index 593fbd9f7323de0a2d2ea88fcd26bae4d0d67aa9..0c5858985486c56f7c4b89c797f4799e8b7fc049 100644
---- a/run_gui.bat
-+++ b/run_gui.bat
+diff a/run_gui.bat b/run_gui.bat	(rejected hunks)
 @@ -1,13 +1,15 @@
  @echo off
  setlocal
@@ -21,7 +17,3 @@ index 593fbd9f7323de0a2d2ea88fcd26bae4d0d67aa9..0c5858985486c56f7c4b89c797f4799e
  python run.py gui
  
  endlocal
- 
-EOF
-)
- 
