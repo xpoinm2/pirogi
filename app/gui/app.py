@@ -702,7 +702,7 @@ class MainMenuWindow:
         notebook.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
 
         main_menu_tab = ttk.Frame(notebook, padding=16)
-        main_menu_tab = ttk.Frame(notebook, padding=16)
+        relay_tab = ttk.Frame(notebook, padding=16)
         accounts_tab = ttk.Frame(notebook, padding=16)
         notebook.add(main_menu_tab, text="Главное меню")
         notebook.add(relay_tab, text="Рассылка из чата")
