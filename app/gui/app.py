@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import os
 import traceback
 from concurrent.futures import Future
 from pathlib import Path
@@ -10,11 +11,13 @@ from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from app.db import Database
+from app.exceptions import AppError
 from app.gui.async_worker import AsyncWorker
 from app.gui.backend import AuthResult, TelegramManagerBackend
 from app.logging_setup import setup_logging
 from app.models import DialogInfo, ImportMessageItem, ScheduleBatchResult, ScheduledMessageInfo
-from app.settings import Settings
+from app.services.session_manager import SessionManager
+from app.settings import PROJECT_ROOT, Settings
 from app.utils import format_dt, truncate_text
 
 try:
@@ -662,6 +665,17 @@ class MainMenuWindow:
         self.root.title("Telegram Manager Desktop")
         self.root.geometry("1100x720")
         self.root.minsize(900, 600)
+        self.accounts_summary_var = tk.StringVar(value="Аккаунты ещё не добавлены.")
+        self.total_accounts_var = tk.StringVar(value="0")
+        self.live_accounts_var = tk.StringVar(value="0")
+        self.frozen_accounts_var = tk.StringVar(value="0")
+        self.deleted_accounts_var = tk.StringVar(value="0")
+
+        self.session_dir = self._resolve_storage_path("SESSION_DIR", "data/sessions")
+        self.database_path = self._resolve_storage_path("DATABASE_PATH", "data/telegram_manager.db")
+        self.db = Database(self.database_path)
+        self.db.init()
+        self.session_manager = SessionManager(session_dir=self.session_dir)
 
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
@@ -681,12 +695,155 @@ class MainMenuWindow:
             foreground="#555555",
         ).pack(anchor="w", pady=(8, 0))
 
-        ttk.Label(accounts_tab, text="Аккаунты", font=("Segoe UI", 16, "bold")).pack(anchor="w")
+        self._build_accounts_tab(accounts_tab)
+        self.refresh_accounts()
+
+    def _build_accounts_tab(self, frame: ttk.Frame) -> None:
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(3, weight=1)
+
+        ttk.Label(frame, text="Аккаунты", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, sticky="w")
         ttk.Label(
-            accounts_tab,
-            text="Пока пусто — вкладка подготовлена для будущих функций.",
+            frame,
+            text=(
+                "Импортируй Telethon-сессии (.session) через Browse, чтобы добавить аккаунт в программу.\n"
+                "После добавления аккаунты доступны для дальнейших операций."
+            ),
             foreground="#555555",
-        ).pack(anchor="w", pady=(8, 0))
+            justify="left",
+        ).grid(row=1, column=0, sticky="w", pady=(8, 0))
+
+        controls = ttk.Frame(frame)
+        controls.grid(row=2, column=0, sticky="ew", pady=(14, 0))
+        ttk.Button(controls, text="Добавить аккаунт (Browse...)", command=self.add_account_via_browse).pack(side="left")
+        ttk.Button(controls, text="Обновить список", command=self.refresh_accounts).pack(side="left", padx=(8, 0))
+        ttk.Label(
+            controls,
+            text=f"Session storage: {self.session_dir}",
+            foreground="#666666",
+        ).pack(side="left", padx=(16, 0))
+
+        summary = ttk.LabelFrame(frame, text="Состояние аккаунтов", padding=10)
+        summary.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        for index in range(4):
+            summary.columnconfigure(index, weight=1)
+
+        self._summary_cell(summary, "Всего", self.total_accounts_var, 0)
+        self._summary_cell(summary, "Живые", self.live_accounts_var, 1)
+        self._summary_cell(summary, "Замороженные", self.frozen_accounts_var, 2)
+        self._summary_cell(summary, "Удалённые", self.deleted_accounts_var, 3)
+
+        ttk.Label(summary, textvariable=self.accounts_summary_var, foreground="#444444").grid(
+            row=1, column=0, columnspan=4, sticky="w", pady=(10, 0)
+        )
+
+        table_box = ttk.LabelFrame(frame, text="Список аккаунтов", padding=10)
+        table_box.grid(row=4, column=0, sticky="nsew", pady=(12, 0))
+        frame.rowconfigure(4, weight=1)
+        table_box.columnconfigure(0, weight=1)
+        table_box.rowconfigure(0, weight=1)
+
+        self.accounts_tree = ttk.Treeview(
+            table_box,
+            columns=("id", "account_name", "session_file", "status", "updated_at"),
+            show="headings",
+            height=18,
+        )
+        for column, text, width in (
+            ("id", "ID", 70),
+            ("account_name", "Аккаунт", 260),
+            ("session_file", "Session file", 280),
+            ("status", "Состояние", 130),
+            ("updated_at", "Обновлён", 220),
+        ):
+            self.accounts_tree.heading(column, text=text)
+            self.accounts_tree.column(column, width=width, anchor="w")
+        self.accounts_tree.grid(row=0, column=0, sticky="nsew")
+
+        accounts_scroll = ttk.Scrollbar(table_box, orient="vertical", command=self.accounts_tree.yview)
+        accounts_scroll.grid(row=0, column=1, sticky="ns")
+        self.accounts_tree.configure(yscrollcommand=accounts_scroll.set)
+
+    @staticmethod
+    def _summary_cell(parent: ttk.LabelFrame, title: str, value_var: tk.StringVar, column: int) -> None:
+        cell = ttk.Frame(parent, padding=(6, 2))
+        cell.grid(row=0, column=column, sticky="ew")
+        ttk.Label(cell, text=title, foreground="#666666").pack(anchor="w")
+        ttk.Label(cell, textvariable=value_var, font=("Segoe UI", 16, "bold")).pack(anchor="w")
+
+    def add_account_via_browse(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Выбери telethon.session",
+            filetypes=[
+                ("Telethon session", "*.session"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not path:
+            return
+
+        try:
+            imported = self.session_manager.import_session(path)
+            self.db.upsert_account(
+                session_file=imported.destination.name,
+                account_name=imported.destination.stem,
+                status="live",
+            )
+            self.refresh_accounts()
+        except AppError as exc:
+            messagebox.showerror("Ошибка импорта", str(exc))
+            return
+        except Exception as exc:  # pragma: no cover - defensive GUI branch
+            messagebox.showerror("Ошибка", f"Не удалось добавить аккаунт: {exc}")
+            return
+
+        suffix = " (файл переименован)" if imported.renamed else ""
+        messagebox.showinfo(
+            "Готово",
+            f"Аккаунт добавлен: {imported.destination.name}{suffix}",
+        )
+
+    def refresh_accounts(self) -> None:
+        rows = [dict(row) for row in self.db.list_accounts(include_deleted=True)]
+        for item in self.accounts_tree.get_children():
+            self.accounts_tree.delete(item)
+
+        counts = {"live": 0, "frozen": 0, "deleted": 0}
+        status_labels = {"live": "живой", "frozen": "заморожен", "deleted": "удалён"}
+        for row in rows:
+            status = str(row.get("status") or "live")
+            counts[status] = counts.get(status, 0) + 1
+            self.accounts_tree.insert(
+                "",
+                "end",
+                values=(
+                    row.get("id"),
+                    row.get("account_name"),
+                    row.get("session_file"),
+                    status_labels.get(status, status),
+                    row.get("updated_at"),
+                ),
+            )
+
+        total = len(rows)
+        self.total_accounts_var.set(str(total))
+        self.live_accounts_var.set(str(counts.get("live", 0)))
+        self.frozen_accounts_var.set(str(counts.get("frozen", 0)))
+        self.deleted_accounts_var.set(str(counts.get("deleted", 0)))
+
+        self.accounts_summary_var.set(
+            "В базе: "
+            f"{total} аккаунтов — живые: {counts.get('live', 0)}, "
+            f"замороженные: {counts.get('frozen', 0)}, удалённые: {counts.get('deleted', 0)}."
+        )
+
+    @staticmethod
+    def _resolve_storage_path(env_name: str, default: str) -> Path:
+        raw = os.getenv(env_name, default).strip() or default
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            path = PROJECT_ROOT / path
+        return path.resolve()
 
 
 def configure_windows_dpi() -> None:

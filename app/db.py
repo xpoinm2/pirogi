@@ -65,6 +65,25 @@ class Database:
                 ON scheduled_messages(status, send_at)
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS accounts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_file TEXT NOT NULL UNIQUE,
+                    account_name TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'live',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    CHECK(status IN ('live', 'frozen', 'deleted'))
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_accounts_status
+                ON accounts(status, updated_at)
+                """
+            )
 
     def save_scheduled_message(self, record: ScheduledMessageRecord) -> None:
         now = _to_iso(datetime.now(UTC))
@@ -201,4 +220,36 @@ class Database:
         with self.connect() as conn:
             rows = conn.execute(query, params).fetchall()
 
+        return rows
+
+    def upsert_account(
+        self,
+        *,
+        session_file: str,
+        account_name: str,
+        status: str = "live",
+    ) -> None:
+        now = _to_iso(datetime.now(UTC))
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO accounts (session_file, account_name, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(session_file) DO UPDATE SET
+                    account_name = excluded.account_name,
+                    status = excluded.status,
+                    updated_at = excluded.updated_at
+                """,
+                (session_file, account_name, status, now, now),
+            )
+
+    def list_accounts(self, *, include_deleted: bool = True) -> list[sqlite3.Row]:
+        query = "SELECT * FROM accounts"
+        params: list[object] = []
+        if not include_deleted:
+            query += " WHERE status != ?"
+            params.append("deleted")
+        query += " ORDER BY updated_at DESC, id DESC"
+        with self.connect() as conn:
+            rows = conn.execute(query, params).fetchall()
         return rows
