@@ -10,6 +10,13 @@ from telethon.errors import SessionPasswordNeededError
 from app.db import Database
 from app.exceptions import AppError
 from app.models import DialogInfo, ImportMessageItem, ScheduleBatchResult, ScheduledMessageInfo
+from app.importers import load_relay_plan
+from app.services.relay_service import (
+    build_relay_tasks,
+    pause_relay_run,
+    process_relay_run,
+    resume_relay_run,
+)
 from app.services.scheduler_service import (
     cancel_remote_scheduled,
     load_messages_from_file,
@@ -218,6 +225,92 @@ class TelegramManagerBackend:
     async def get_local_records(self, *, chat_id: int | None = None) -> list[dict[str, Any]]:
         rows = self.db.list_records(chat_id=chat_id, limit=500)
         return [dict(row) for row in rows]
+
+    async def preview_relay_plan(self, *, file_path: str) -> list[tuple[int, int]]:
+        resolved = self._resolve_existing_file(file_path)
+        return load_relay_plan(resolved)
+
+    async def start_relay_run(
+        self,
+        *,
+        source_chat_id: int,
+        mode: str,
+        file_path: str | None,
+        message_ids: list[int],
+        target_chat_ids: list[int],
+        delay_min: int,
+        delay_max: int,
+        long_pause_every: int,
+        long_pause_min: int,
+        long_pause_max: int,
+        dry_run: bool,
+    ) -> dict[str, object]:
+        await self._ensure_authorized()
+
+        if file_path:
+            pairs = load_relay_plan(self._resolve_existing_file(file_path))
+            source_ids = [pair[0] for pair in pairs]
+            target_ids = [pair[1] for pair in pairs]
+            run_mode = "one_to_one"
+        else:
+            source_ids = message_ids
+            target_ids = target_chat_ids
+            run_mode = mode
+
+        tasks = build_relay_tasks(
+            mode=run_mode,
+            source_chat_id=source_chat_id,
+            source_message_ids=source_ids,
+            target_chat_ids=target_ids,
+        )
+        run_id = self.db.create_relay_run(
+            mode=run_mode,
+            source_chat_id=source_chat_id,
+            total_tasks=len(tasks),
+            delay_min_seconds=delay_min,
+            delay_max_seconds=delay_max,
+            long_pause_every=long_pause_every,
+            long_pause_min_seconds=long_pause_min,
+            long_pause_max_seconds=long_pause_max,
+            dry_run=dry_run,
+        )
+        self.db.add_relay_tasks(
+            run_id,
+            [(index, source_chat_id, msg_id, target_chat_id) for index, msg_id, target_chat_id in tasks],
+        )
+        return await process_relay_run(
+            self.client,
+            db=self.db,
+            logger=self.logger,
+            run_id=run_id,
+            max_attempts=self.settings.max_retries,
+        )
+
+    async def relay_status(self, *, run_id: int) -> dict[str, object]:
+        summary = self.db.relay_run_summary(run_id)
+        if summary is None:
+            raise AppError(f"Relay run #{run_id} не найден")
+        return summary
+
+    async def relay_pause(self, *, run_id: int) -> dict[str, object]:
+        pause_relay_run(self.db, run_id)
+        return await self.relay_status(run_id=run_id)
+
+    async def relay_resume(self, *, run_id: int) -> dict[str, object]:
+        await self._ensure_authorized()
+        resume_relay_run(self.db, run_id)
+        return await process_relay_run(
+            self.client,
+            db=self.db,
+            logger=self.logger,
+            run_id=run_id,
+            max_attempts=self.settings.max_retries,
+        )
+
+    async def get_relay_runs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        rows = self.db.list_relay_runs(limit=limit)
+        return [dict(row) for row in rows]
+
 
     async def _ensure_authorized(self) -> None:
         await self.connect()

@@ -665,6 +665,7 @@ class MainMenuWindow:
         self.root.title("Telegram Manager Desktop")
         self.root.geometry("1100x720")
         self.root.minsize(900, 600)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.accounts_summary_var = tk.StringVar(value="Аккаунты ещё не добавлены.")
         self.total_accounts_var = tk.StringVar(value="0")
         self.live_accounts_var = tk.StringVar(value="0")
@@ -676,6 +677,23 @@ class MainMenuWindow:
         self.db = Database(self.database_path)
         self.db.init()
         self.session_manager = SessionManager(session_dir=self.session_dir)
+        self.worker = AsyncWorker()
+        self.settings: Settings | None = None
+        self.backend: TelegramManagerBackend | None = None
+        self.logger = setup_logging(self._resolve_storage_path("LOG_DIR", "logs"), "INFO")
+        self.relay_mode_var = tk.StringVar(value="one_to_one")
+        self.relay_source_chat_var = tk.StringVar()
+        self.relay_plan_var = tk.StringVar()
+        self.relay_message_ids_var = tk.StringVar()
+        self.relay_target_ids_var = tk.StringVar()
+        self.relay_delay_min_var = tk.StringVar(value="180")
+        self.relay_delay_max_var = tk.StringVar(value="360")
+        self.relay_long_every_var = tk.StringVar(value="20")
+        self.relay_long_min_var = tk.StringVar(value="300")
+        self.relay_long_max_var = tk.StringVar(value="600")
+        self.relay_dry_run_var = tk.BooleanVar(value=False)
+        self.relay_run_id_var = tk.StringVar()
+        self.relay_status_var = tk.StringVar(value="Готово к запуску рассылки.")
 
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
@@ -684,8 +702,10 @@ class MainMenuWindow:
         notebook.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
 
         main_menu_tab = ttk.Frame(notebook, padding=16)
+        main_menu_tab = ttk.Frame(notebook, padding=16)
         accounts_tab = ttk.Frame(notebook, padding=16)
         notebook.add(main_menu_tab, text="Главное меню")
+        notebook.add(relay_tab, text="Рассылка из чата")
         notebook.add(accounts_tab, text="Аккаунты")
 
         ttk.Label(main_menu_tab, text="Главное меню", font=("Segoe UI", 16, "bold")).pack(anchor="w")
@@ -695,6 +715,7 @@ class MainMenuWindow:
             foreground="#555555",
         ).pack(anchor="w", pady=(8, 0))
 
+        self._build_relay_tab(relay_tab)
         self._build_accounts_tab(accounts_tab)
         self.refresh_accounts()
 
@@ -763,6 +784,112 @@ class MainMenuWindow:
         accounts_scroll = ttk.Scrollbar(table_box, orient="vertical", command=self.accounts_tree.yview)
         accounts_scroll.grid(row=0, column=1, sticky="ns")
         self.accounts_tree.configure(yscrollcommand=accounts_scroll.set)
+
+def _build_relay_tab(self, frame: ttk.Frame) -> None:
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(2, weight=1)
+
+        ttk.Label(frame, text="Рассылка из чата", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            frame,
+            text=(
+                "Создай run для пересылки/копирования сообщений из исходного чата в целевые чаты.\n"
+                "Поддерживаются one_to_one (план-файл) и all_to_all (списки ID)."
+            ),
+            foreground="#555555",
+            justify="left",
+        ).grid(row=1, column=0, sticky="w", pady=(8, 10))
+
+        config_box = ttk.LabelFrame(frame, text="Параметры запуска", padding=10)
+        config_box.grid(row=2, column=0, sticky="ew")
+        for i in range(6):
+            config_box.columnconfigure(i, weight=1 if i in (1, 3, 5) else 0)
+
+        ttk.Label(config_box, text="Source chat ID").grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Entry(config_box, textvariable=self.relay_source_chat_var, width=22).grid(row=0, column=1, sticky="ew", pady=4)
+        ttk.Label(config_box, text="Режим").grid(row=0, column=2, sticky="w", padx=(12, 0), pady=4)
+        ttk.Combobox(
+            config_box,
+            textvariable=self.relay_mode_var,
+            values=("one_to_one", "all_to_all"),
+            state="readonly",
+            width=16,
+        ).grid(row=0, column=3, sticky="w", pady=4)
+        ttk.Checkbutton(config_box, text="Dry run", variable=self.relay_dry_run_var).grid(
+            row=0, column=4, sticky="w", padx=(12, 0), pady=4
+        )
+
+        ttk.Label(config_box, text="Plan file (CSV/JSON)").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Entry(config_box, textvariable=self.relay_plan_var).grid(row=1, column=1, columnspan=3, sticky="ew", pady=4)
+        ttk.Button(config_box, text="Browse...", command=self.browse_relay_plan).grid(row=1, column=4, sticky="w", padx=(8, 0))
+        ttk.Button(config_box, text="Проверить план", command=self.preview_relay_plan).grid(
+            row=1, column=5, sticky="w", padx=(8, 0)
+        )
+
+        ttk.Label(config_box, text="Message IDs").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Entry(config_box, textvariable=self.relay_message_ids_var).grid(row=2, column=1, columnspan=2, sticky="ew", pady=4)
+        ttk.Label(config_box, text="Target chat IDs").grid(row=2, column=3, sticky="w", pady=4)
+        ttk.Entry(config_box, textvariable=self.relay_target_ids_var).grid(row=2, column=4, columnspan=2, sticky="ew", pady=4)
+
+        ttk.Label(config_box, text="Delay min/max (sec)").grid(row=3, column=0, sticky="w", pady=4)
+        delay_row = ttk.Frame(config_box)
+        delay_row.grid(row=3, column=1, sticky="w", pady=4)
+        ttk.Entry(delay_row, textvariable=self.relay_delay_min_var, width=8).pack(side="left")
+        ttk.Label(delay_row, text="/").pack(side="left", padx=4)
+        ttk.Entry(delay_row, textvariable=self.relay_delay_max_var, width=8).pack(side="left")
+
+        ttk.Label(config_box, text="Long pause every N").grid(row=3, column=2, sticky="w", padx=(12, 0), pady=4)
+        ttk.Entry(config_box, textvariable=self.relay_long_every_var, width=8).grid(row=3, column=3, sticky="w", pady=4)
+
+        ttk.Label(config_box, text="Long pause min/max").grid(row=3, column=4, sticky="w", pady=4)
+        long_row = ttk.Frame(config_box)
+        long_row.grid(row=3, column=5, sticky="w", pady=4)
+        ttk.Entry(long_row, textvariable=self.relay_long_min_var, width=8).pack(side="left")
+        ttk.Label(long_row, text="/").pack(side="left", padx=4)
+        ttk.Entry(long_row, textvariable=self.relay_long_max_var, width=8).pack(side="left")
+
+        actions = ttk.Frame(frame)
+        actions.grid(row=3, column=0, sticky="ew", pady=(12, 8))
+        ttk.Button(actions, text="Старт рассылки", command=self.start_relay_run).pack(side="left")
+        ttk.Label(actions, text="Run ID").pack(side="left", padx=(16, 6))
+        ttk.Entry(actions, textvariable=self.relay_run_id_var, width=10).pack(side="left")
+        ttk.Button(actions, text="Статус", command=self.relay_status).pack(side="left", padx=(8, 0))
+        ttk.Button(actions, text="Пауза", command=self.relay_pause).pack(side="left", padx=(8, 0))
+        ttk.Button(actions, text="Возобновить", command=self.relay_resume).pack(side="left", padx=(8, 0))
+        ttk.Button(actions, text="Обновить список run", command=self.refresh_relay_runs).pack(side="left", padx=(8, 0))
+
+        ttk.Label(frame, textvariable=self.relay_status_var, foreground="#0b5ed7").grid(row=4, column=0, sticky="w")
+
+        table = ttk.LabelFrame(frame, text="Последние relay run", padding=10)
+        table.grid(row=5, column=0, sticky="nsew", pady=(10, 0))
+        frame.rowconfigure(5, weight=1)
+        table.columnconfigure(0, weight=1)
+        table.rowconfigure(0, weight=1)
+
+        self.relay_runs_tree = ttk.Treeview(
+            table,
+            columns=("id", "mode", "source_chat_id", "total", "status", "dry_run", "updated_at"),
+            show="headings",
+            height=14,
+        )
+        for column, text, width in (
+            ("id", "run_id", 80),
+            ("mode", "mode", 120),
+            ("source_chat_id", "source_chat_id", 150),
+            ("total", "total_tasks", 110),
+            ("status", "status", 110),
+            ("dry_run", "dry_run", 90),
+            ("updated_at", "updated_at", 220),
+        ):
+            self.relay_runs_tree.heading(column, text=text)
+            self.relay_runs_tree.column(column, width=width, anchor="w")
+        self.relay_runs_tree.grid(row=0, column=0, sticky="nsew")
+        self.relay_runs_tree.bind("<<TreeviewSelect>>", self._on_relay_run_select)
+
+        scroll = ttk.Scrollbar(table, orient="vertical", command=self.relay_runs_tree.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.relay_runs_tree.configure(yscrollcommand=scroll.set)
+
 
     @staticmethod
     def _summary_cell(parent: ttk.LabelFrame, title: str, value_var: tk.StringVar, column: int) -> None:
@@ -836,6 +963,219 @@ class MainMenuWindow:
             f"{total} аккаунтов — живые: {counts.get('live', 0)}, "
             f"замороженные: {counts.get('frozen', 0)}, удалённые: {counts.get('deleted', 0)}."
         )
+
+    def browse_relay_plan(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Выбери CSV/JSON план рассылки",
+            filetypes=[("CSV / JSON", "*.csv *.json"), ("All files", "*.*")],
+        )
+        if path:
+            self.relay_plan_var.set(path)
+
+    def preview_relay_plan(self) -> None:
+        backend = self._require_backend()
+        if backend is None:
+            return
+        path = self.relay_plan_var.get().strip()
+        if not path:
+            raise_message("Сначала выбери plan file.")
+            return
+        future = self.worker.submit(backend.preview_relay_plan(file_path=path))
+        self._watch_main_future(future, self._on_relay_plan_preview, "Проверка relay плана")
+
+    def start_relay_run(self) -> None:
+        backend = self._require_backend()
+        if backend is None:
+            return
+        source_chat_id = self._parse_single_int(self.relay_source_chat_var.get(), "Source chat ID")
+        if source_chat_id is None:
+            return
+        parsed = self._collect_relay_params()
+        if parsed is None:
+            return
+        future = self.worker.submit(
+            backend.start_relay_run(
+                source_chat_id=source_chat_id,
+                mode=self.relay_mode_var.get().strip() or "one_to_one",
+                file_path=self.relay_plan_var.get().strip() or None,
+                message_ids=parsed["message_ids"],
+                target_chat_ids=parsed["target_chat_ids"],
+                delay_min=parsed["delay_min"],
+                delay_max=parsed["delay_max"],
+                long_pause_every=parsed["long_pause_every"],
+                long_pause_min=parsed["long_pause_min"],
+                long_pause_max=parsed["long_pause_max"],
+                dry_run=self.relay_dry_run_var.get(),
+            )
+        )
+        self._watch_main_future(future, self._on_relay_action_done, "Запуск relay рассылки")
+
+    def relay_status(self) -> None:
+        backend = self._require_backend()
+        run_id = self._parse_single_int(self.relay_run_id_var.get(), "Run ID")
+        if backend is None or run_id is None:
+            return
+        future = self.worker.submit(backend.relay_status(run_id=run_id))
+        self._watch_main_future(future, self._on_relay_action_done, "Получение статуса relay")
+
+    def relay_pause(self) -> None:
+        backend = self._require_backend()
+        run_id = self._parse_single_int(self.relay_run_id_var.get(), "Run ID")
+        if backend is None or run_id is None:
+            return
+        future = self.worker.submit(backend.relay_pause(run_id=run_id))
+        self._watch_main_future(future, self._on_relay_action_done, "Пауза relay")
+
+    def relay_resume(self) -> None:
+        backend = self._require_backend()
+        run_id = self._parse_single_int(self.relay_run_id_var.get(), "Run ID")
+        if backend is None or run_id is None:
+            return
+        future = self.worker.submit(backend.relay_resume(run_id=run_id))
+        self._watch_main_future(future, self._on_relay_action_done, "Возобновление relay")
+
+    def refresh_relay_runs(self) -> None:
+        backend = self._require_backend()
+        if backend is None:
+            return
+        future = self.worker.submit(backend.get_relay_runs(limit=200))
+        self._watch_main_future(future, self._on_relay_runs_loaded, "Загрузка relay run")
+
+    def _watch_main_future(self, future: Future[object], on_success, action_name: str) -> None:
+        self.relay_status_var.set(f"{action_name}...")
+
+        def _done_callback(done_future: Future[object]) -> None:
+            self.root.after(0, self._handle_main_future_result, done_future, on_success, action_name)
+
+        future.add_done_callback(_done_callback)
+
+    def _handle_main_future_result(self, future: Future[object], on_success, action_name: str) -> None:
+        try:
+            result = future.result()
+        except Exception as exc:
+            self.logger.exception("GUI action failed: %s", action_name)
+            self.relay_status_var.set(f"Ошибка: {exc}")
+            messagebox.showerror("Ошибка", str(exc))
+            return
+        on_success(result)
+
+    def _on_relay_plan_preview(self, pairs: list[tuple[int, int]]) -> None:
+        self.relay_status_var.set(f"План валиден. Пар: {len(pairs)}")
+
+    def _on_relay_action_done(self, summary: dict[str, object]) -> None:
+        run_id = int(summary["id"])
+        self.relay_run_id_var.set(str(run_id))
+        self.relay_status_var.set(
+            f"run_id={run_id} status={summary['status']} total={summary['total_tasks']} "
+            f"sent={summary['sent_tasks']} failed={summary['failed_tasks']} skipped={summary['skipped_tasks']}"
+        )
+        self.refresh_relay_runs()
+
+    def _on_relay_runs_loaded(self, rows: list[dict[str, object]]) -> None:
+        for item in self.relay_runs_tree.get_children():
+            self.relay_runs_tree.delete(item)
+        for row in rows:
+            self.relay_runs_tree.insert(
+                "",
+                "end",
+                iid=str(row["id"]),
+                values=(
+                    row.get("id"),
+                    row.get("mode"),
+                    row.get("source_chat_id"),
+                    row.get("total_tasks"),
+                    row.get("status"),
+                    "yes" if row.get("dry_run") else "no",
+                    row.get("updated_at"),
+                ),
+            )
+        self.relay_status_var.set(f"Загружено run: {len(rows)}")
+
+    def _on_relay_run_select(self, _event: tk.Event) -> None:
+        selected = self.relay_runs_tree.selection()
+        if selected:
+            self.relay_run_id_var.set(selected[0])
+
+    def _collect_relay_params(self) -> dict[str, object] | None:
+        delay_min = self._parse_single_int(self.relay_delay_min_var.get(), "Delay min")
+        delay_max = self._parse_single_int(self.relay_delay_max_var.get(), "Delay max")
+        long_every = self._parse_single_int(self.relay_long_every_var.get(), "Long pause every")
+        long_min = self._parse_single_int(self.relay_long_min_var.get(), "Long pause min")
+        long_max = self._parse_single_int(self.relay_long_max_var.get(), "Long pause max")
+        if None in {delay_min, delay_max, long_every, long_min, long_max}:
+            return None
+
+        if delay_min <= 0 or delay_max <= 0 or delay_min > delay_max:
+            raise_message("Delay min/max заданы некорректно.")
+            return None
+        if long_every < 0:
+            raise_message("Long pause every не может быть отрицательным.")
+            return None
+        if long_every > 0 and (long_min <= 0 or long_max <= 0 or long_min > long_max):
+            raise_message("Long pause min/max заданы некорректно.")
+            return None
+
+        message_ids = self._parse_id_list(self.relay_message_ids_var.get(), "Message IDs")
+        target_ids = self._parse_id_list(self.relay_target_ids_var.get(), "Target chat IDs")
+        if message_ids is None or target_ids is None:
+            return None
+        return {
+            "delay_min": delay_min,
+            "delay_max": delay_max,
+            "long_pause_every": long_every,
+            "long_pause_min": long_min,
+            "long_pause_max": long_max,
+            "message_ids": message_ids,
+            "target_chat_ids": target_ids,
+        }
+
+    @staticmethod
+    def _parse_single_int(raw: str, label: str) -> int | None:
+        value = raw.strip()
+        if not value:
+            raise_message(f"{label}: обязательное поле.")
+            return None
+        try:
+            return int(value)
+        except ValueError:
+            raise_message(f"{label} должен быть целым числом.")
+            return None
+
+    @staticmethod
+    def _parse_id_list(raw: str, label: str) -> list[int] | None:
+        clean = [chunk for chunk in raw.replace(",", " ").split() if chunk]
+        if not clean:
+            return []
+        try:
+            return [int(chunk) for chunk in clean]
+        except ValueError:
+            raise_message(f"{label} должны содержать только целые числа.")
+            return None
+
+    def _require_backend(self) -> TelegramManagerBackend | None:
+        if self.backend is not None:
+            return self.backend
+        try:
+            self.settings = Settings.load()
+            self.backend = TelegramManagerBackend(settings=self.settings, db=self.db, logger=self.logger)
+        except Exception as exc:
+            messagebox.showerror(
+                "Настройка недоступна",
+                f"Не удалось инициализировать Telegram backend.\nПроверь config/.env (API_ID/API_HASH).\n{exc}",
+            )
+            return None
+        return self.backend
+
+    def on_close(self) -> None:
+        try:
+            if self.backend is not None:
+                self.worker.submit(self.backend.disconnect()).result(timeout=10)
+        except Exception:
+            self.logger.exception("Ошибка при отключении backend")
+        finally:
+            self.worker.stop()
+            self.root.destroy()
+
 
     @staticmethod
     def _resolve_storage_path(env_name: str, default: str) -> Path:

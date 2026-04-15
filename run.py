@@ -11,6 +11,10 @@ CLI_COMMANDS = {
     "list-scheduled",
     "cancel",
     "preview-import",
+    "relay-start",
+    "relay-status",
+    "relay-pause",
+    "relay-resume",
 }
 
 
