@@ -1,8 +1,4 @@
- (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
-diff --git a/setup_windows.bat b/setup_windows.bat
-index f0fe9beb40880393074c4523930c05451508befb..1b67e6e91d646705430d776bfa8dda00414f413c 100644
---- a/setup_windows.bat
-+++ b/setup_windows.bat
+diff a/setup_windows.bat b/setup_windows.bat	(rejected hunks)
 @@ -1,24 +1,59 @@
  @echo off
  setlocal
@@ -67,6 +63,3 @@ index f0fe9beb40880393074c4523930c05451508befb..1b67e6e91d646705430d776bfa8dda00
  
  echo.
  pause
- 
-EOF
-)
