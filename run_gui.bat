@@ -1,3 +1,15 @@
-Get-Content .\codex.patch |
-  Where-Object { $_ -notmatch '^\s*\(cd ' -and $_ -notmatch '^EOF\s*$' -and $_ -notmatch '^\)\s*$' } |
-  Set-Content .\fix.patch -Encoding utf8
+@echo off
+setlocal
+
+cd /d "%~dp0"
+
+if not exist ".venv\Scripts\python.exe" (
+    echo Virtual environment not found. Run setup_windows.bat first.
+    pause
+    exit /b 1
+)
+
+call ".venv\Scripts\activate.bat"
+python run.py gui
+
+endlocal
