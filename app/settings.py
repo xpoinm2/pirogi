@@ -24,7 +24,7 @@ def _load_env_files() -> None:
 
 
 def _get_required(name: str) -> str:
-    value = os.getenv(name, "").strip()
+    value = os.getenv(name, "").strip().strip("\"'")
     if not value:
         raise ConfigError(f"Не задано обязательное значение {name} в config/.env")
     return value
@@ -35,7 +35,7 @@ def _get_int(name: str, default: int) -> int:
     if raw is None or raw.strip() == "":
         return default
     try:
-        return int(raw)
+        return int(raw.strip().strip("\"'"))
     except ValueError as exc:
         raise ConfigError(f"{name} должно быть целым числом") from exc
 
@@ -45,7 +45,7 @@ def _get_float(name: str, default: float) -> float:
     if raw is None or raw.strip() == "":
         return default
     try:
-        return float(raw)
+        return float(raw.strip().strip("\"'"))
     except ValueError as exc:
         raise ConfigError(f"{name} должно быть числом") from exc
 
