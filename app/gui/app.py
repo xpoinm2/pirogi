@@ -10,6 +10,7 @@ import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
+from tkinter import TclError
 from urllib.parse import urlparse
 
 from app.db import Database
@@ -120,6 +121,21 @@ class ClipboardShortcutManager:
         widget = self._focused_widget(event)
         if widget is None:
             return None
+        if isinstance(widget, (tk.Entry, ttk.Entry, ttk.Combobox, tk.Spinbox)):
+            try:
+                clipboard_text = self.root.clipboard_get()
+            except TclError:
+                return "break"
+            widget.insert("insert", clipboard_text)
+            return "break"
+
+        if isinstance(widget, (tk.Text, ScrolledText)):
+            try:
+                clipboard_text = self.root.clipboard_get()
+            except TclError:
+                return "break"
+            widget.insert("insert", clipboard_text)
+            return "break"
         try:
             widget.event_generate("<<Paste>>")
             return "break"
@@ -835,30 +851,50 @@ class MainMenuWindow:
         notebook.add(accounts_tab, text="Аккаунты")
 
         ttk.Label(main_menu_tab, text="Главное меню", font=("Segoe UI", 16, "bold")).pack(anchor="w")
-        ttk.Label(
-            main_menu_tab,
-            text="Раздел готов к наполнению функциями.",
-            foreground="#555555",
-        ).pack(anchor="w", pady=(8, 0))
+        self._add_selectable_note(main_menu_tab, "Раздел готов к наполнению функциями.", pady=(8, 0))
 
         self._build_relay_tab(relay_tab)
         self._build_accounts_tab(accounts_tab)
         self.refresh_accounts()
+
+    def _add_selectable_note(
+        self,
+        parent: tk.Misc,
+        text: str,
+        *,
+        pady: tuple[int, int] | None = None,
+        grid: dict[str, object] | None = None,
+    ) -> None:
+        note = tk.Text(
+            parent,
+            wrap="word",
+            height=max(1, text.count("\n") + 1),
+            relief="flat",
+            borderwidth=0,
+            background=self.root.cget("background"),
+            foreground="#555555",
+            font=("Segoe UI", 10),
+            cursor="xterm",
+        )
+        note.insert("1.0", text)
+        note.configure(state="disabled")
+
+        if grid is not None:
+            note.grid(**grid)
+        else:
+            note.pack(anchor="w", fill="x", pady=pady or (0, 0))
 
     def _build_accounts_tab(self, frame: ttk.Frame) -> None:
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(3, weight=1)
 
         ttk.Label(frame, text="Аккаунты", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, sticky="w")
-        ttk.Label(
+        self._add_selectable_note(
             frame,
-            text=(
-                "Импортируй Telethon-сессии (.session) через Browse, чтобы добавить аккаунт в программу.\n"
-                "После добавления аккаунты доступны для дальнейших операций."
-            ),
-            foreground="#555555",
-            justify="left",
-        ).grid(row=1, column=0, sticky="w", pady=(8, 0))
+            "Импортируй Telethon-сессии (.session) через Browse, чтобы добавить аккаунт в программу.\n"
+            "После добавления аккаунты доступны для дальнейших операций.",
+            grid={"row": 1, "column": 0, "sticky": "ew", "pady": (8, 0)},
+        )
 
         controls = ttk.Frame(frame)
         controls.grid(row=2, column=0, sticky="ew", pady=(14, 0))
