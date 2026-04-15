@@ -785,7 +785,7 @@ class MainMenuWindow:
         accounts_scroll.grid(row=0, column=1, sticky="ns")
         self.accounts_tree.configure(yscrollcommand=accounts_scroll.set)
 
-def _build_relay_tab(self, frame: ttk.Frame) -> None:
+    def _build_relay_tab(self, frame: ttk.Frame) -> None:
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(2, weight=1)
 
