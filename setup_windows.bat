@@ -1,47 +1,44 @@
 @echo off
 setlocal
 
-if not exist .venv (
+cd /d "%~dp0"
+
+if not exist ".venv\Scripts\python.exe" (
     py -3.11 -m venv .venv
+    if errorlevel 1 (
+        echo Failed to create virtual environment with Python 3.11.
+        echo Install Python 3.11+ and re-run setup_windows.bat.
+        pause
+        exit /b 1
+    )
 )
 
-call .venv\Scriptsctivate.bat
+call ".venv\Scripts\activate.bat"
+if errorlevel 1 (
+    echo Failed to activate virtual environment.
+    pause
+    exit /b 1
+)
+
 python -m pip install --upgrade pip
+if errorlevel 1 (
+    echo Failed to upgrade pip.
+    pause
+    exit /b 1
+)
+
 pip install -r requirements.txt
+if errorlevel 1 (
+    echo Failed to install requirements.
+    pause
+    exit /b 1
+)
 
 echo.
 echo Setup finished.
 echo Copy .env.example to config\.env and fill API_ID / API_HASH.
 echo Then run one of:
-echo     run_gui.bat (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
-diff --git a/run_gui.bat.rej b/run_gui.bat.rej
-deleted file mode 100644
-index 1eaca5dbccfc868946f0d952f0d337c7d9001aa6..0000000000000000000000000000000000000000
---- a/run_gui.bat.rej
-+++ /dev/null
-@@ -1,19 +0,0 @@
--diff a/run_gui.bat b/run_gui.bat	(rejected hunks)
--@@ -1,13 +1,15 @@
-- @echo off
-- setlocal
-- 
---if not exist .venv\Scripts\python.exe (
--+cd /d "%~dp0"
--+
--+if not exist ".venv\Scripts\python.exe" (
--     echo Virtual environment not found. Run setup_windows.bat first.
--     pause
--     exit /b 1
-- )
-- 
---call .venv\Scriptsctivate.bat
--+call ".venv\Scripts\activate.bat"
-- python run.py gui
-- 
-- endlocal
- 
-EOF
-)
+echo     run_gui.bat
 
 echo Optional CLI commands:
 echo     run_menu.bat
