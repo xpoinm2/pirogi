@@ -1,60 +1,80 @@
  (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
 diff --git a/setup_windows.bat b/setup_windows.bat
-index f0fe9beb40880393074c4523930c05451508befb..07894522d401398181986509f006a5835f1756f1 100644
+index 07894522d401398181986509f006a5835f1756f1..c38bd51bc8ea4e5e46371f0791cc7f5f7f16a061 100644
 --- a/setup_windows.bat
 +++ b/setup_windows.bat
-@@ -1,24 +1,49 @@
+@@ -1,34 +1,69 @@
  @echo off
  setlocal
  
--if not exist .venv (
-+cd /d "%~dp0"
+ cd /d "%~dp0"
+ 
++set "PYTHON_CMD="
 +
-+if not exist ".venv\Scripts\python.exe" (
-     py -3.11 -m venv .venv
-+    if errorlevel 1 (
-+        echo Failed to create virtual environment with Python 3.11.
-+        echo Install Python 3.11+ and re-run setup_windows.bat.
-+        pause
-+        exit /b 1
++where py >nul 2>&1
++if not errorlevel 1 (
++    py -3.11 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
++    if not errorlevel 1 (
++        set "PYTHON_CMD=py -3.11"
 +    )
 +)
 +
-+call ".venv\Scripts\activate.bat"
-+if errorlevel 1 (
-+    echo Failed to activate virtual environment.
-+    pause
-+    exit /b 1
- )
- 
--call .venv\Scriptsctivate.bat
- python -m pip install --upgrade pip
-+if errorlevel 1 (
-+    echo Failed to upgrade pip.
++if not defined PYTHON_CMD (
++    where py >nul 2>&1
++    if not errorlevel 1 (
++        py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
++        if not errorlevel 1 (
++            set "PYTHON_CMD=py -3"
++        )
++    )
++)
++
++if not defined PYTHON_CMD (
++    python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
++    if not errorlevel 1 (
++        set "PYTHON_CMD=python"
++    )
++)
++
++if not defined PYTHON_CMD (
++    echo Python 3.11+ was not found.
++    echo Install Python 3.11+ from https://www.python.org/downloads/windows/
++    echo Make sure "Add python.exe to PATH" is enabled during install.
 +    pause
 +    exit /b 1
 +)
 +
+ if not exist ".venv\Scripts\python.exe" (
+-    py -3.11 -m venv .venv
++    %PYTHON_CMD% -m venv .venv
+     if errorlevel 1 (
+-        echo Failed to create virtual environment with Python 3.11.
++        echo Failed to create virtual environment with Python 3.11+.
+         echo Install Python 3.11+ and re-run setup_windows.bat.
+         pause
+         exit /b 1
+     )
+ )
+ 
+ call ".venv\Scripts\activate.bat"
+ if errorlevel 1 (
+     echo Failed to activate virtual environment.
+     pause
+     exit /b 1
+ )
+ 
+ python -m pip install --upgrade pip
+ if errorlevel 1 (
+     echo Failed to upgrade pip.
+     pause
+     exit /b 1
+ )
+ 
  pip install -r requirements.txt
-+if errorlevel 1 (
-+    echo Failed to install requirements.
-+    pause
-+    exit /b 1
-+)
- 
- echo.
- echo Setup finished.
- echo Copy .env.example to config\.env and fill API_ID / API_HASH.
- echo Then run one of:
- echo     run_gui.bat
- 
- echo Optional CLI commands:
- echo     run_menu.bat
- 
- echo     .venv\Scripts\python.exe run.py dialogs
- 
- echo.
- pause
+ if errorlevel 1 (
+     echo Failed to install requirements.
+     pause
+     exit /b 1
  
 EOF
 )

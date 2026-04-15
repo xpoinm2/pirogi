@@ -3,10 +3,45 @@ setlocal
 
 cd /d "%~dp0"
 
+set "PYTHON_CMD="
+
+where py >nul 2>&1
+if not errorlevel 1 (
+    py -3.11 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
+    if not errorlevel 1 (
+        set "PYTHON_CMD=py -3.11"
+    )
+)
+
+if not defined PYTHON_CMD (
+    where py >nul 2>&1
+    if not errorlevel 1 (
+        py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
+        if not errorlevel 1 (
+            set "PYTHON_CMD=py -3"
+        )
+    )
+)
+
+if not defined PYTHON_CMD (
+    python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
+    if not errorlevel 1 (
+        set "PYTHON_CMD=python"
+    )
+)
+
+if not defined PYTHON_CMD (
+    echo Python 3.11+ was not found.
+    echo Install Python 3.11+ from https://www.python.org/downloads/windows/
+    echo Make sure "Add python.exe to PATH" is enabled during install.
+    pause
+    exit /b 1
+)
+
 if not exist ".venv\Scripts\python.exe" (
-    py -3.11 -m venv .venv
+    %PYTHON_CMD% -m venv .venv
     if errorlevel 1 (
-        echo Failed to create virtual environment with Python 3.11.
+        echo Failed to create virtual environment with Python 3.11+.
         echo Install Python 3.11+ and re-run setup_windows.bat.
         pause
         exit /b 1
@@ -32,18 +67,3 @@ if errorlevel 1 (
     echo Failed to install requirements.
     pause
     exit /b 1
-)
-
-echo.
-echo Setup finished.
-echo Copy .env.example to config\.env and fill API_ID / API_HASH.
-echo Then run one of:
-echo     run_gui.bat
-
-echo Optional CLI commands:
-echo     run_menu.bat
-
-echo     .venv\Scripts\python.exe run.py dialogs
-
-echo.
-pause
