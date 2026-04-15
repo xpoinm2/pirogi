@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import re
 import traceback
 from concurrent.futures import Future
 from pathlib import Path
@@ -9,6 +10,7 @@ import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
+from urllib.parse import urlparse
 
 from app.db import Database
 from app.exceptions import AppError
@@ -681,16 +683,11 @@ class MainMenuWindow:
         self.settings: Settings | None = None
         self.backend: TelegramManagerBackend | None = None
         self.logger = setup_logging(self._resolve_storage_path("LOG_DIR", "logs"), "INFO")
-        self.relay_mode_var = tk.StringVar(value="one_to_one")
         self.relay_source_chat_var = tk.StringVar()
-        self.relay_plan_var = tk.StringVar()
         self.relay_message_ids_var = tk.StringVar()
         self.relay_target_ids_var = tk.StringVar()
         self.relay_delay_min_var = tk.StringVar(value="180")
         self.relay_delay_max_var = tk.StringVar(value="360")
-        self.relay_long_every_var = tk.StringVar(value="20")
-        self.relay_long_min_var = tk.StringVar(value="300")
-        self.relay_long_max_var = tk.StringVar(value="600")
         self.relay_dry_run_var = tk.BooleanVar(value=False)
         self.relay_run_id_var = tk.StringVar()
         self.relay_status_var = tk.StringVar(value="Готово к запуску рассылки.")
@@ -794,7 +791,8 @@ class MainMenuWindow:
             frame,
             text=(
                 "Создай run для пересылки/копирования сообщений из исходного чата в целевые чаты.\n"
-                "Поддерживаются one_to_one (план-файл) и all_to_all (списки ID)."
+                "Режим all_to_all: каждый Message ID отправляется в каждый Target chat.\n"
+                "Message IDs можно вставлять числами или ссылками на сообщения."
             ),
             foreground="#555555",
             justify="left",
@@ -802,34 +800,19 @@ class MainMenuWindow:
 
         config_box = ttk.LabelFrame(frame, text="Параметры запуска", padding=10)
         config_box.grid(row=2, column=0, sticky="ew")
-        for i in range(6):
-            config_box.columnconfigure(i, weight=1 if i in (1, 3, 5) else 0)
+        for i in range(4):
+            config_box.columnconfigure(i, weight=1 if i in (1, 3) else 0)
 
         ttk.Label(config_box, text="Source chat ID").grid(row=0, column=0, sticky="w", pady=4)
         ttk.Entry(config_box, textvariable=self.relay_source_chat_var, width=22).grid(row=0, column=1, sticky="ew", pady=4)
-        ttk.Label(config_box, text="Режим").grid(row=0, column=2, sticky="w", padx=(12, 0), pady=4)
-        ttk.Combobox(
-            config_box,
-            textvariable=self.relay_mode_var,
-            values=("one_to_one", "all_to_all"),
-            state="readonly",
-            width=16,
-        ).grid(row=0, column=3, sticky="w", pady=4)
         ttk.Checkbutton(config_box, text="Dry run", variable=self.relay_dry_run_var).grid(
-            row=0, column=4, sticky="w", padx=(12, 0), pady=4
+            row=0, column=2, sticky="w", padx=(12, 0), pady=4
         )
 
-        ttk.Label(config_box, text="Plan file (CSV/JSON)").grid(row=1, column=0, sticky="w", pady=4)
-        ttk.Entry(config_box, textvariable=self.relay_plan_var).grid(row=1, column=1, columnspan=3, sticky="ew", pady=4)
-        ttk.Button(config_box, text="Browse...", command=self.browse_relay_plan).grid(row=1, column=4, sticky="w", padx=(8, 0))
-        ttk.Button(config_box, text="Проверить план", command=self.preview_relay_plan).grid(
-            row=1, column=5, sticky="w", padx=(8, 0)
-        )
-
-        ttk.Label(config_box, text="Message IDs").grid(row=2, column=0, sticky="w", pady=4)
-        ttk.Entry(config_box, textvariable=self.relay_message_ids_var).grid(row=2, column=1, columnspan=2, sticky="ew", pady=4)
-        ttk.Label(config_box, text="Target chat IDs").grid(row=2, column=3, sticky="w", pady=4)
-        ttk.Entry(config_box, textvariable=self.relay_target_ids_var).grid(row=2, column=4, columnspan=2, sticky="ew", pady=4)
+        ttk.Label(config_box, text="Message IDs / links").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Entry(config_box, textvariable=self.relay_message_ids_var).grid(row=1, column=1, columnspan=3, sticky="ew", pady=4)
+        ttk.Label(config_box, text="Target chat IDs / links").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Entry(config_box, textvariable=self.relay_target_ids_var).grid(row=2, column=1, columnspan=3, sticky="ew", pady=4)
 
         ttk.Label(config_box, text="Delay min/max (sec)").grid(row=3, column=0, sticky="w", pady=4)
         delay_row = ttk.Frame(config_box)
@@ -837,16 +820,6 @@ class MainMenuWindow:
         ttk.Entry(delay_row, textvariable=self.relay_delay_min_var, width=8).pack(side="left")
         ttk.Label(delay_row, text="/").pack(side="left", padx=4)
         ttk.Entry(delay_row, textvariable=self.relay_delay_max_var, width=8).pack(side="left")
-
-        ttk.Label(config_box, text="Long pause every N").grid(row=3, column=2, sticky="w", padx=(12, 0), pady=4)
-        ttk.Entry(config_box, textvariable=self.relay_long_every_var, width=8).grid(row=3, column=3, sticky="w", pady=4)
-
-        ttk.Label(config_box, text="Long pause min/max").grid(row=3, column=4, sticky="w", pady=4)
-        long_row = ttk.Frame(config_box)
-        long_row.grid(row=3, column=5, sticky="w", pady=4)
-        ttk.Entry(long_row, textvariable=self.relay_long_min_var, width=8).pack(side="left")
-        ttk.Label(long_row, text="/").pack(side="left", padx=4)
-        ttk.Entry(long_row, textvariable=self.relay_long_max_var, width=8).pack(side="left")
 
         actions = ttk.Frame(frame)
         actions.grid(row=3, column=0, sticky="ew", pady=(12, 8))
@@ -964,30 +937,11 @@ class MainMenuWindow:
             f"замороженные: {counts.get('frozen', 0)}, удалённые: {counts.get('deleted', 0)}."
         )
 
-    def browse_relay_plan(self) -> None:
-        path = filedialog.askopenfilename(
-            title="Выбери CSV/JSON план рассылки",
-            filetypes=[("CSV / JSON", "*.csv *.json"), ("All files", "*.*")],
-        )
-        if path:
-            self.relay_plan_var.set(path)
-
-    def preview_relay_plan(self) -> None:
-        backend = self._require_backend()
-        if backend is None:
-            return
-        path = self.relay_plan_var.get().strip()
-        if not path:
-            raise_message("Сначала выбери plan file.")
-            return
-        future = self.worker.submit(backend.preview_relay_plan(file_path=path))
-        self._watch_main_future(future, self._on_relay_plan_preview, "Проверка relay плана")
-
     def start_relay_run(self) -> None:
         backend = self._require_backend()
         if backend is None:
             return
-        source_chat_id = self._parse_single_int(self.relay_source_chat_var.get(), "Source chat ID")
+        source_chat_id = self._parse_chat_id(self.relay_source_chat_var.get(), "Source chat ID")
         if source_chat_id is None:
             return
         parsed = self._collect_relay_params()
@@ -996,15 +950,10 @@ class MainMenuWindow:
         future = self.worker.submit(
             backend.start_relay_run(
                 source_chat_id=source_chat_id,
-                mode=self.relay_mode_var.get().strip() or "one_to_one",
-                file_path=self.relay_plan_var.get().strip() or None,
                 message_ids=parsed["message_ids"],
                 target_chat_ids=parsed["target_chat_ids"],
                 delay_min=parsed["delay_min"],
                 delay_max=parsed["delay_max"],
-                long_pause_every=parsed["long_pause_every"],
-                long_pause_min=parsed["long_pause_min"],
-                long_pause_max=parsed["long_pause_max"],
                 dry_run=self.relay_dry_run_var.get(),
             )
         )
@@ -1059,9 +1008,6 @@ class MainMenuWindow:
             return
         on_success(result)
 
-    def _on_relay_plan_preview(self, pairs: list[tuple[int, int]]) -> None:
-        self.relay_status_var.set(f"План валиден. Пар: {len(pairs)}")
-
     def _on_relay_action_done(self, summary: dict[str, object]) -> None:
         run_id = int(summary["id"])
         self.relay_run_id_var.set(str(run_id))
@@ -1099,32 +1045,19 @@ class MainMenuWindow:
     def _collect_relay_params(self) -> dict[str, object] | None:
         delay_min = self._parse_single_int(self.relay_delay_min_var.get(), "Delay min")
         delay_max = self._parse_single_int(self.relay_delay_max_var.get(), "Delay max")
-        long_every = self._parse_single_int(self.relay_long_every_var.get(), "Long pause every")
-        long_min = self._parse_single_int(self.relay_long_min_var.get(), "Long pause min")
-        long_max = self._parse_single_int(self.relay_long_max_var.get(), "Long pause max")
-        if None in {delay_min, delay_max, long_every, long_min, long_max}:
+        if None in {delay_min, delay_max}:
             return None
 
         if delay_min <= 0 or delay_max <= 0 or delay_min > delay_max:
             raise_message("Delay min/max заданы некорректно.")
             return None
-        if long_every < 0:
-            raise_message("Long pause every не может быть отрицательным.")
-            return None
-        if long_every > 0 and (long_min <= 0 or long_max <= 0 or long_min > long_max):
-            raise_message("Long pause min/max заданы некорректно.")
-            return None
-
-        message_ids = self._parse_id_list(self.relay_message_ids_var.get(), "Message IDs")
-        target_ids = self._parse_id_list(self.relay_target_ids_var.get(), "Target chat IDs")
+        message_ids = self._parse_message_ids(self.relay_message_ids_var.get(), "Message IDs")
+        target_ids = self._parse_chat_id_list(self.relay_target_ids_var.get(), "Target chat IDs")
         if message_ids is None or target_ids is None:
             return None
         return {
             "delay_min": delay_min,
             "delay_max": delay_max,
-            "long_pause_every": long_every,
-            "long_pause_min": long_min,
-            "long_pause_max": long_max,
             "message_ids": message_ids,
             "target_chat_ids": target_ids,
         }
@@ -1141,16 +1074,84 @@ class MainMenuWindow:
             raise_message(f"{label} должен быть целым числом.")
             return None
 
-    @staticmethod
-    def _parse_id_list(raw: str, label: str) -> list[int] | None:
+    def _parse_message_ids(self, raw: str, label: str) -> list[int] | None:
         clean = [chunk for chunk in raw.replace(",", " ").split() if chunk]
         if not clean:
             return []
-        try:
-            return [int(chunk) for chunk in clean]
-        except ValueError:
-            raise_message(f"{label} должны содержать только целые числа.")
+            
+        parsed: list[int] = []
+        for chunk in clean:
+            message_id = self._extract_message_id(chunk)
+            if message_id is None:
+                raise_message(f"{label}: не удалось распознать ID из '{chunk}'.")
+                return None
+            parsed.append(message_id)
+        return parsed
+
+    def _parse_chat_id_list(self, raw: str, label: str) -> list[int] | None:
+        clean = [chunk for chunk in raw.replace(",", " ").split() if chunk]
+        if not clean:
+            return []
+
+        parsed: list[int] = []
+        for chunk in clean:
+            chat_id = self._parse_chat_id(chunk, label)
+            if chat_id is None:
+                return None
+            parsed.append(chat_id)
+        return parsed
+
+    def _parse_chat_id(self, raw: str, label: str) -> int | None:
+        value = raw.strip()
+        if not value:
+            raise_message(f"{label}: обязательное поле.")
             return None
+        try:
+                        return self._extract_chat_id(value)
+        except ValueError as exc:
+            raise_message(f"{label}: {exc}")
+            return None
+
+    @staticmethod
+    def _extract_message_id(value: str) -> int | None:
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+                        pass
+
+        parsed = urlparse(raw)
+        if parsed.scheme not in {"http", "https"}:
+            return None
+        parts = [segment for segment in parsed.path.split("/") if segment]
+        if not parts:
+            return None
+        candidate = parts[-1]
+        if candidate.isdigit():
+            return int(candidate)
+        return None
+
+    @staticmethod
+    def _extract_chat_id(value: str) -> int:
+        raw = value.strip()
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+
+        parsed = urlparse(raw)
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError("введи числовой chat id или ссылку вида https://t.me/c/<id>/<message_id>.")
+        if parsed.netloc not in {"t.me", "telegram.me", "www.t.me"}:
+            raise ValueError("поддерживаются только ссылки t.me.")
+        parts = [segment for segment in parsed.path.split("/") if segment]
+        if len(parts) >= 2 and parts[0] == "c" and parts[1].isdigit():
+            return int(f"-100{parts[1]}")
+        if re.fullmatch(r"-?\d+", parts[-1] if parts else ""):
+            return int(parts[-1])
+        raise ValueError("не удалось извлечь chat id из ссылки.")
 
     def _require_backend(self) -> TelegramManagerBackend | None:
         if self.backend is not None:

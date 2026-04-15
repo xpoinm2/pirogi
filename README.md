@@ -193,7 +193,8 @@ python run.py cancel --chat-id 123456789 --message-ids 101 102 103
 ```bash
 python run.py relay-start \
   --source-chat-id -1001234567890 \
-  --plan-file sample_relay_plan.csv \
+  --message-ids 101 102 103 \
+  --target-chat-ids -1002222222222 -1003333333333 \
   --delay-min 180 \
   --delay-max 360
 ```
@@ -211,7 +212,8 @@ python run.py relay-resume --run-id 1
 ```bash
 python run.py relay-start \
   --source-chat-id -1001234567890 \
-  --plan-file sample_relay_plan.csv \
+  --message-ids 101 102 103 \
+  --target-chat-ids -1002222222222 -1003333333333 \
   --delay-min 180 \
   --delay-max 360
 ```

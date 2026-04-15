@@ -13,13 +13,9 @@ from app.exceptions import ValidationError
 
 def build_relay_tasks(
     *,
-    mode: str,
-    source_chat_id: int,
     source_message_ids: list[int],
     target_chat_ids: list[int],
 ) -> list[tuple[int, int, int]]:
-    if mode not in {"one_to_one", "all_to_all"}:
-        raise ValidationError("mode должен быть one_to_one или all_to_all")
     if not source_message_ids:
         raise ValidationError("Нужен хотя бы один source message id")
     if not target_chat_ids:
@@ -27,13 +23,6 @@ def build_relay_tasks(
 
     tasks: list[tuple[int, int, int]] = []
     index = 1
-    if mode == "one_to_one":
-        if len(source_message_ids) != len(target_chat_ids):
-            raise ValidationError("Для one_to_one число message_id должно совпадать с числом target_chat_id")
-        for message_id, target_chat_id in zip(source_message_ids, target_chat_ids):
-            tasks.append((index, message_id, target_chat_id))
-            index += 1
-        return tasks
 
     for message_id in source_message_ids:
         for target_chat_id in target_chat_ids:
@@ -70,7 +59,6 @@ async def process_relay_run(
 
     source_chat = await client.get_input_entity(int(run["source_chat_id"]))
     entity_cache: dict[int, object] = {}
-    sent_counter = int(_require_summary(db, run_id)["sent_tasks"])
     dry_run = bool(run["dry_run"])
 
     for task in pending:
@@ -99,7 +87,6 @@ async def process_relay_run(
                     entity_cache=entity_cache,
                 )
                 db.mark_relay_task_sent(task_id, getattr(message, "id", None))
-                sent_counter += 1
                 delay_seconds = random.randint(int(run["delay_min_seconds"]), int(run["delay_max_seconds"]))
                 logger.info(
                     "Relay task #%s sent (msg=%s -> chat=%s), sleep=%s",
@@ -109,20 +96,6 @@ async def process_relay_run(
                     delay_seconds,
                 )
                 await asyncio.sleep(delay_seconds)
-
-                long_pause_every = int(run["long_pause_every"])
-                if long_pause_every > 0 and sent_counter % long_pause_every == 0:
-                    extra_pause = random.randint(
-                        int(run["long_pause_min_seconds"]),
-                        int(run["long_pause_max_seconds"]),
-                    )
-                    logger.info(
-                        "Relay run #%s long pause triggered after %s sends: %s sec",
-                        run_id,
-                        sent_counter,
-                        extra_pause,
-                    )
-                    await asyncio.sleep(extra_pause)
         except RPCError as exc:
             text = f"{exc.__class__.__name__}: {exc}"
             logger.error("Relay task failed (run=%s task=%s): %s", run_id, task["task_index"], text)

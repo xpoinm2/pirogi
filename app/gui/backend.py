@@ -10,7 +10,6 @@ from telethon.errors import SessionPasswordNeededError
 from app.db import Database
 from app.exceptions import AppError
 from app.models import DialogInfo, ImportMessageItem, ScheduleBatchResult, ScheduledMessageInfo
-from app.importers import load_relay_plan
 from app.services.relay_service import (
     build_relay_tasks,
     pause_relay_run,
@@ -226,52 +225,32 @@ class TelegramManagerBackend:
         rows = self.db.list_records(chat_id=chat_id, limit=500)
         return [dict(row) for row in rows]
 
-    async def preview_relay_plan(self, *, file_path: str) -> list[tuple[int, int]]:
-        resolved = self._resolve_existing_file(file_path)
-        return load_relay_plan(resolved)
-
     async def start_relay_run(
         self,
         *,
         source_chat_id: int,
-        mode: str,
-        file_path: str | None,
         message_ids: list[int],
         target_chat_ids: list[int],
         delay_min: int,
         delay_max: int,
-        long_pause_every: int,
-        long_pause_min: int,
-        long_pause_max: int,
         dry_run: bool,
     ) -> dict[str, object]:
         await self._ensure_authorized()
 
-        if file_path:
-            pairs = load_relay_plan(self._resolve_existing_file(file_path))
-            source_ids = [pair[0] for pair in pairs]
-            target_ids = [pair[1] for pair in pairs]
-            run_mode = "one_to_one"
-        else:
-            source_ids = message_ids
-            target_ids = target_chat_ids
-            run_mode = mode
 
         tasks = build_relay_tasks(
-            mode=run_mode,
-            source_chat_id=source_chat_id,
-            source_message_ids=source_ids,
-            target_chat_ids=target_ids,
+            source_message_ids=message_ids,
+            target_chat_ids=target_chat_ids,
         )
         run_id = self.db.create_relay_run(
-            mode=run_mode,
+            mode="all_to_all",
             source_chat_id=source_chat_id,
             total_tasks=len(tasks),
             delay_min_seconds=delay_min,
             delay_max_seconds=delay_max,
-            long_pause_every=long_pause_every,
-            long_pause_min_seconds=long_pause_min,
-            long_pause_max_seconds=long_pause_max,
+            long_pause_every=0,
+            long_pause_min_seconds=0,
+            long_pause_max_seconds=0,
             dry_run=dry_run,
         )
         self.db.add_relay_tasks(
