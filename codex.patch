@@ -1,36 +1,25 @@
  (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
 diff --git a/setup_windows.bat b/setup_windows.bat
-index f0fe9beb40880393074c4523930c05451508befb..1b67e6e91d646705430d776bfa8dda00414f413c 100644
+index f0fe9beb40880393074c4523930c05451508befb..07894522d401398181986509f006a5835f1756f1 100644
 --- a/setup_windows.bat
 +++ b/setup_windows.bat
-@@ -1,24 +1,59 @@
+@@ -1,24 +1,49 @@
  @echo off
  setlocal
  
 -if not exist .venv (
--    py -3.11 -m venv .venv
 +cd /d "%~dp0"
 +
-+if exist ".venv\Scripts\python.exe" goto VENV_READY
-+
-+echo Creating virtual environment in .venv ...
-+py -3.11 -m venv .venv
-+if errorlevel 1 (
-+    echo Python 3.11 via launcher not found, trying default Python launcher ...
-+    py -3 -m venv .venv
-+)
-+if errorlevel 1 (
-+    echo Python launcher failed, trying python command ...
-+    python -m venv .venv
-+)
-+if errorlevel 1 (
-+    echo Failed to create virtual environment.
-+    echo Install Python 3.11+ and make sure "py" or "python" is available in PATH.
-+    pause
-+    exit /b 1
++if not exist ".venv\Scripts\python.exe" (
+     py -3.11 -m venv .venv
++    if errorlevel 1 (
++        echo Failed to create virtual environment with Python 3.11.
++        echo Install Python 3.11+ and re-run setup_windows.bat.
++        pause
++        exit /b 1
++    )
 +)
 +
-+:VENV_READY
 +call ".venv\Scripts\activate.bat"
 +if errorlevel 1 (
 +    echo Failed to activate virtual environment.
@@ -56,8 +45,7 @@ index f0fe9beb40880393074c4523930c05451508befb..1b67e6e91d646705430d776bfa8dda00
  echo.
  echo Setup finished.
  echo Copy .env.example to config\.env and fill API_ID / API_HASH.
--echo Then run one of:
-+echo Then run:
+ echo Then run one of:
  echo     run_gui.bat
  
  echo Optional CLI commands:
