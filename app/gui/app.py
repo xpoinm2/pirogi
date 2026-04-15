@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import traceback
 from concurrent.futures import Future
 from pathlib import Path
@@ -687,7 +688,34 @@ class MainMenuWindow:
             foreground="#555555",
         ).pack(anchor="w", pady=(8, 0))
 
+
+def configure_windows_dpi() -> None:
+    if not hasattr(ctypes, "windll"):
+        return
+
+    user32 = ctypes.windll.user32
+    shcore = getattr(ctypes.windll, "shcore", None)
+
+    per_monitor_aware_v2 = ctypes.c_void_p(-4)
+
+    try:
+        user32.SetProcessDpiAwarenessContext(per_monitor_aware_v2)
+        return
+    except Exception:
+        pass
+
+    if shcore is None:
+        return
+
+    process_per_monitor_dpi_aware = 2
+    try:
+        shcore.SetProcessDpiAwareness(process_per_monitor_dpi_aware)
+    except Exception:
+        pass
+
+
 def main() -> None:
+    configure_windows_dpi()
     root = TkinterDnD.Tk()
     root.option_add("*Font", "{Segoe UI} 10")
     MainMenuWindow(root)
