@@ -86,8 +86,8 @@ class Settings:
     max_batch_size: int
     max_scheduled_per_chat: int
     dialog_fetch_limit: int
-    project_root: Path = PROJECT_ROOT
     session_check_timeout_seconds: int
+    project_root: Path = PROJECT_ROOT
 
     @classmethod
     def load(cls) -> "Settings":
