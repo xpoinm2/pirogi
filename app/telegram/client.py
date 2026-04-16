@@ -7,6 +7,7 @@ from pathlib import Path
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 
+from app.exceptions import ConfigError
 from app.settings import Settings
 
 
@@ -15,11 +16,13 @@ def _resolve_proxy(settings: Settings) -> tuple[str, str, int, str | None, str |
     if proxy is None:
         return None
     if importlib.util.find_spec("python_socks") is None:
-        logging.getLogger("telethon").warning(
+        message = (
             "Прокси настроен, но пакет python-socks не установлен. "
-            "Запускаем подключение без прокси, чтобы избежать ошибки Telethon."
+            "Установите зависимости заново (pip install -r requirements.txt), "
+            "иначе подключение через прокси невозможно."
         )
-        return None
+        logging.getLogger("telethon").error(message)
+        raise ConfigError(message)
     return proxy
 
 
