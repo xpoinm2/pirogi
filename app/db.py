@@ -322,6 +322,10 @@ class Database:
                 (status, now, account_id),
             )
 
+    def delete_account(self, account_id: int) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
+
     def create_relay_run(
         self,
         *,

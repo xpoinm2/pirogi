@@ -950,7 +950,6 @@ class MainMenuWindow:
         self.total_accounts_var = tk.StringVar(value="0")
         self.live_accounts_var = tk.StringVar(value="0")
         self.frozen_accounts_var = tk.StringVar(value="0")
-        self.deleted_accounts_var = tk.StringVar(value="0")
         self.account_phone_var = tk.StringVar()
         self.account_code_var = tk.StringVar()
         self.account_password_var = tk.StringVar()
@@ -1158,16 +1157,15 @@ class MainMenuWindow:
 
         summary = ttk.LabelFrame(content, text="Состояние аккаунтов", padding=10)
         summary.grid(row=4, column=0, sticky="ew", pady=(12, 0))
-        for index in range(4):
+        for index in range(3):
             summary.columnconfigure(index, weight=1)
 
         self._summary_cell(summary, "Всего", self.total_accounts_var, 0)
         self._summary_cell(summary, "Живые", self.live_accounts_var, 1)
         self._summary_cell(summary, "Замороженные", self.frozen_accounts_var, 2)
-        self._summary_cell(summary, "Удалённые", self.deleted_accounts_var, 3)
 
         ttk.Label(summary, textvariable=self.accounts_summary_var, foreground="#444444").grid(
-            row=1, column=0, columnspan=4, sticky="w", pady=(10, 0)
+            row=1, column=0, columnspan=3, sticky="w", pady=(10, 0)
         )
 
         table_box = ttk.LabelFrame(content, text="Список аккаунтов", padding=10)
@@ -1700,11 +1698,11 @@ class MainMenuWindow:
         if not messagebox.askyesno(
             "Удалить аккаунт",
             f"Удалить аккаунт '{account_name or session_file}'?\n"
-            "Запись получит статус 'удалён', а session-файл будет удалён с диска.",
+            "Аккаунт будет полностью удалён из базы, а session-файл — с диска.",
         ):
             return
 
-        self.db.update_account_status(account_id, "deleted")
+        self.db.delete_account(account_id)
         session_path = (self.session_dir / session_file).resolve()
         if session_file and session_path.exists() and session_path.is_file():
             try:
@@ -1712,7 +1710,7 @@ class MainMenuWindow:
             except OSError as exc:
                 messagebox.showwarning(
                     "Session не удалён",
-                    f"Статус аккаунта обновлён, но session-файл не удалён:\n{exc}",
+                    f"Аккаунт удалён из базы, но session-файл не удалён:\n{exc}",
                 )
 
         active_session = self.session_manager.get_active_session_path()
@@ -1735,7 +1733,7 @@ class MainMenuWindow:
         session_path = (self.session_dir / session_file).resolve()
 
         if not session_file or not session_path.exists():
-            self.db.update_account_status(account_id, "deleted")
+            self.db.delete_account(account_id)
             self.refresh_accounts()
             messagebox.showerror("Session не найдена", f"Файл сессии не найден:\n{session_path}")
             return
@@ -1808,12 +1806,12 @@ class MainMenuWindow:
             f"Аккаунт: {account_name or session_file}\n{result.message}",
         )
     def refresh_accounts(self) -> None:
-        rows = [dict(row) for row in self.db.list_accounts(include_deleted=True)]
+        rows = [dict(row) for row in self.db.list_accounts(include_deleted=False)]
         for item in self.accounts_tree.get_children():
             self.accounts_tree.delete(item)
 
-        counts = {"live": 0, "frozen": 0, "deleted": 0}
-        status_labels = {"live": "живой", "frozen": "заморожен", "deleted": "удалён"}
+        counts = {"live": 0, "frozen": 0}
+        status_labels = {"live": "живой", "frozen": "заморожен"}
         for row in rows:
             status = str(row.get("status") or "live")
             counts[status] = counts.get(status, 0) + 1
@@ -1833,12 +1831,11 @@ class MainMenuWindow:
         self.total_accounts_var.set(str(total))
         self.live_accounts_var.set(str(counts.get("live", 0)))
         self.frozen_accounts_var.set(str(counts.get("frozen", 0)))
-        self.deleted_accounts_var.set(str(counts.get("deleted", 0)))
 
         self.accounts_summary_var.set(
             "В базе: "
             f"{total} аккаунтов — живые: {counts.get('live', 0)}, "
-            f"замороженные: {counts.get('frozen', 0)}, удалённые: {counts.get('deleted', 0)}."
+            f"замороженные: {counts.get('frozen', 0)}."
         )
 
     def start_relay_run(self) -> None:

@@ -1,0 +1,15 @@
+{
+  "active_id": "5f5ef067ce3045c08912d3bffd8a0a5d",
+  "proxies": [
+    {
+      "id": "5f5ef067ce3045c08912d3bffd8a0a5d",
+      "title": "Болгария",
+      "mode": "SOCKS",
+      "scheme": "socks5",
+      "host": "103.227.86.61",
+      "port": 8000,
+      "username": "yuFkew",
+      "password": "8yd2eM"
+    }
+  ]
+}
