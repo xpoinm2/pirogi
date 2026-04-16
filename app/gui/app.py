@@ -1405,13 +1405,27 @@ class MainMenuWindow:
     def _require_backend(self) -> TelegramManagerBackend | None:
         if self.backend is not None:
             return self.backend
+
+        active_session = self.session_manager.get_active_session_path()
+        if active_session is None:
+            messagebox.showerror(
+                "Сессия не выбрана",
+                "Сначала импортируй .session файл во вкладке «Аккаунты».",
+            )
+            return None
+
         try:
             self.settings = Settings.load()
-            self.backend = TelegramManagerBackend(settings=self.settings, db=self.db, logger=self.logger)
+            self.backend = TelegramManagerBackend(
+                settings=self.settings,
+                db=self.db,
+                logger=self.logger,
+                session_path=active_session,
+            )
         except Exception as exc:
             messagebox.showerror(
                 "Настройка недоступна",
-                f"Не удалось инициализировать Telegram backend.\nПроверь config/.env (API_ID/API_HASH).\n{exc}",
+                f"Не удалось инициализировать Telegram backend.\n{exc}",
             )
             return None
         return self.backend

@@ -44,11 +44,12 @@ class TelegramManagerBackend:
         settings: Settings,
         db: Database,
         logger: logging.Logger,
+        session_path: Path | None = None,
     ) -> None:
         self.settings = settings
         self.db = db
         self.logger = logger
-        self.client = create_client(settings)
+        self.client = create_client(settings, session_path=session_path)
         self._pending_phone: str | None = None
         self._phone_code_hash: str | None = None
 

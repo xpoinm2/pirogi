@@ -12,6 +12,9 @@ from app.exceptions import ConfigError
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+FALLBACK_API_ID = 2040
+FALLBACK_API_HASH = "b18441a1ff607e10a989891a5462e627"
+
 
 def _load_env_files() -> None:
     candidates = (
