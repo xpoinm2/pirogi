@@ -32,6 +32,12 @@ def _get_required(name: str) -> str:
         raise ConfigError(f"Не задано обязательное значение {name} в config/.env")
     return value
 
+def _get_optional(name: str) -> str | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    cleaned = value.strip().strip("\"'")
+    return cleaned or None
 
 def _get_int(name: str, default: int) -> int:
     raw = os.getenv(name)
@@ -86,11 +92,11 @@ class Settings:
     def load(cls) -> "Settings":
         _load_env_files()
 
-        api_id = _get_int("API_ID", 0)
+        api_id = _get_int("API_ID", FALLBACK_API_ID)
         if api_id <= 0:
             raise ConfigError("API_ID должен быть положительным числом")
 
-        api_hash = _get_required("API_HASH")
+        api_hash = _get_optional("API_HASH") or FALLBACK_API_HASH
         timezone_name = os.getenv("TIMEZONE", "Europe/Vilnius").strip() or "Europe/Vilnius"
 
         try:
