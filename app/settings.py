@@ -167,7 +167,14 @@ class Settings:
             self.proxy_username,
             self.proxy_password,
         )
-        
+
+    @property
+    def proxy_summary(self) -> str:
+        if not self.proxy_type or not self.proxy_host or not self.proxy_port:
+            return "без прокси"
+        auth_suffix = " + auth" if self.proxy_username else ""
+        return f"через прокси {self.proxy_type.lower()}://{self.proxy_host}:{self.proxy_port}{auth_suffix}"
+         
     def ensure_directories(self) -> None:
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)

@@ -150,7 +150,7 @@ class TelegramManagerBackend:
         self.logger.info("Код подтверждения отправлен на %s", phone)
         return AuthResult(
             status="code_sent",
-            message=f"Код отправлен на {phone}. Введите code и нажмите 'Войти'.",
+            message=f"Код отправлен на {phone}. Введите code и нажмите 'Добавить аккаунт'.",
         )
 
     async def sign_in(self, code: str, password: str | None = None) -> AuthResult:

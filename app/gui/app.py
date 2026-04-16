@@ -1188,6 +1188,10 @@ class MainMenuWindow:
         suffix = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         return f"phone_{token}_{suffix}.session"
 
+    @staticmethod
+    def _proxy_status_text(settings: Settings) -> str:
+        return f"Сеть: {settings.proxy_summary}."
+
     def request_account_code(self) -> None:
         phone = self.account_phone_var.get().strip()
         if not phone:
@@ -1212,7 +1216,10 @@ class MainMenuWindow:
             session_path=session_path,
         )
         self._account_login_session_file = session_file
-        self.account_auth_status_var.set("Отправка кода подтверждения...")
+        self.account_auth_status_var.set(
+            "Этап 1/3: подключение к Telegram и запрос кода. "
+            f"{self._proxy_status_text(settings)}"
+        )
 
         future = self.worker.submit(self._account_login_backend.request_code(phone))
         self._watch_account_future(
@@ -1225,6 +1232,7 @@ class MainMenuWindow:
         if self._account_login_backend is None or not self._account_login_session_file:
             raise_message("Сначала нажми 'Запросить код' в блоке добавления по номеру.")
             return
+        self.account_auth_status_var.set("Этап 2/3: проверка кода (и 2FA, если включен).")
         future = self.worker.submit(
             self._account_login_backend.sign_in(self.account_code_var.get(), self.account_password_var.get())
         )
@@ -1235,12 +1243,18 @@ class MainMenuWindow:
         )
 
     def _on_account_code_requested(self, result: AuthResult) -> None:
-        self.account_auth_status_var.set(result.message)
+        if result.status == "authorized":
+            self.account_auth_status_var.set(f"Этап 3/3: вход завершён. {result.message}")
+        else:
+            self.account_auth_status_var.set(f"Этап 1/3 завершён. {result.message}")
         if result.status == "authorized":
             self._finalize_account_add(result)
 
     def _on_account_sign_in_completed(self, result: AuthResult) -> None:
-        self.account_auth_status_var.set(result.message)
+        if result.status == "authorized":
+            self.account_auth_status_var.set(f"Этап 3/3: вход завершён. {result.message}")
+        else:
+            self.account_auth_status_var.set(f"Этап 2/3: {result.message}")
         if result.status != "authorized":
             return
         self._finalize_account_add(result)
@@ -1502,6 +1516,7 @@ class MainMenuWindow:
             result = future.result()
         except Exception as exc:
             self.logger.exception("GUI action failed: %s", action_name)
+            self.account_auth_status_var.set(f"{action_name}: ошибка — {exc}")
             messagebox.showerror("Ошибка", str(exc))
             self.refresh_accounts()
             return
