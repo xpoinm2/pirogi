@@ -4,6 +4,7 @@ import ctypes
 import os
 import re
 import traceback
+from datetime import UTC, datetime
 from concurrent.futures import Future
 from pathlib import Path
 import tkinter as tk
@@ -903,6 +904,15 @@ class MainMenuWindow:
         self.live_accounts_var = tk.StringVar(value="0")
         self.frozen_accounts_var = tk.StringVar(value="0")
         self.deleted_accounts_var = tk.StringVar(value="0")
+        self.account_phone_var = tk.StringVar()
+        self.account_code_var = tk.StringVar()
+        self.account_password_var = tk.StringVar()
+        self.account_name_var = tk.StringVar()
+        self.account_auth_status_var = tk.StringVar(
+            value="Добавь .session через Browse или авторизуйся по номеру телефона."
+        )
+        self._account_login_backend: TelegramManagerBackend | None = None
+        self._account_login_session_file: str | None = None
 
         self.session_dir = self._resolve_storage_path("SESSION_DIR", "data/sessions")
         self.database_path = self._resolve_storage_path("DATABASE_PATH", "data/telegram_manager.db")
@@ -971,17 +981,39 @@ class MainMenuWindow:
 
     def _build_accounts_tab(self, frame: ttk.Frame) -> None:
         frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(3, weight=1)
+        frame.rowconfigure(0, weight=1)
 
-        ttk.Label(frame, text="Аккаунты", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, sticky="w")
+        canvas = tk.Canvas(frame, highlightthickness=0)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        canvas.configure(yscrollcommand=scroll.set)
+
+        content = ttk.Frame(canvas)
+        window_id = canvas.create_window((0, 0), window=content, anchor="nw")
+
+        def _sync_scroll_region(_event: tk.Event) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _sync_content_width(event: tk.Event) -> None:
+            canvas.itemconfigure(window_id, width=event.width)
+
+        content.bind("<Configure>", _sync_scroll_region)
+        canvas.bind("<Configure>", _sync_content_width)
+
+        content.columnconfigure(0, weight=1)
+        content.rowconfigure(6, weight=1)
+
+        ttk.Label(content, text="Аккаунты", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, sticky="w")
         self._add_selectable_note(
-            frame,
+            content,
             "Импортируй Telethon-сессии (.session) через Browse, чтобы добавить аккаунт в программу.\n"
+            "Или авторизуй аккаунт по номеру телефона, коду и 2FA ниже.\n"
             "После добавления аккаунты доступны для дальнейших операций.",
             grid={"row": 1, "column": 0, "sticky": "ew", "pady": (8, 0)},
         )
 
-        controls = ttk.Frame(frame)
+        controls = ttk.Frame(content)
         controls.grid(row=2, column=0, sticky="ew", pady=(14, 0))
         ttk.Button(controls, text="Добавить аккаунт (Browse...)", command=self.add_account_via_browse).pack(side="left")
         ttk.Button(controls, text="Обновить список", command=self.refresh_accounts).pack(side="left", padx=(8, 0))
@@ -995,8 +1027,45 @@ class MainMenuWindow:
             foreground="#666666",
         ).pack(side="left", padx=(16, 0))
 
-        summary = ttk.LabelFrame(frame, text="Состояние аккаунтов", padding=10)
-        summary.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        phone_box = ttk.LabelFrame(content, text="Добавление по номеру и коду", padding=10)
+        phone_box.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        phone_box.columnconfigure(1, weight=1)
+
+        ttk.Label(phone_box, text="Имя аккаунта (опционально)").grid(row=0, column=0, sticky="w", pady=(0, 6))
+        ttk.Entry(phone_box, textvariable=self.account_name_var, width=36).grid(
+            row=0, column=1, sticky="ew", pady=(0, 6), padx=(8, 0)
+        )
+
+        ttk.Label(phone_box, text="Phone").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Entry(phone_box, textvariable=self.account_phone_var, width=36).grid(
+            row=1, column=1, sticky="ew", pady=4, padx=(8, 0)
+        )
+        ttk.Button(phone_box, text="Запросить код", command=self.request_account_code).grid(
+            row=1, column=2, sticky="w", padx=(8, 0)
+        )
+
+        ttk.Label(phone_box, text="Code").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Entry(phone_box, textvariable=self.account_code_var, width=24).grid(
+            row=2, column=1, sticky="w", pady=4, padx=(8, 0)
+        )
+
+        ttk.Label(phone_box, text="2FA password").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Entry(phone_box, textvariable=self.account_password_var, width=24, show="*").grid(
+            row=3, column=1, sticky="w", pady=4, padx=(8, 0)
+        )
+        ttk.Button(phone_box, text="Добавить аккаунт", command=self.complete_account_sign_in).grid(
+            row=3, column=2, sticky="w", padx=(8, 0)
+        )
+
+        ttk.Label(
+            phone_box,
+            textvariable=self.account_auth_status_var,
+            foreground="#444444",
+            wraplength=880,
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
+
+        summary = ttk.LabelFrame(content, text="Состояние аккаунтов", padding=10)
+        summary.grid(row=4, column=0, sticky="ew", pady=(12, 0))
         for index in range(4):
             summary.columnconfigure(index, weight=1)
 
@@ -1009,9 +1078,8 @@ class MainMenuWindow:
             row=1, column=0, columnspan=4, sticky="w", pady=(10, 0)
         )
 
-        table_box = ttk.LabelFrame(frame, text="Список аккаунтов", padding=10)
-        table_box.grid(row=4, column=0, sticky="nsew", pady=(12, 0))
-        frame.rowconfigure(4, weight=1)
+        table_box = ttk.LabelFrame(content, text="Список аккаунтов", padding=10)
+        table_box.grid(row=6, column=0, sticky="nsew", pady=(12, 0))
         table_box.columnconfigure(0, weight=1)
         table_box.rowconfigure(0, weight=1)
 
@@ -1035,6 +1103,97 @@ class MainMenuWindow:
         accounts_scroll = ttk.Scrollbar(table_box, orient="vertical", command=self.accounts_tree.yview)
         accounts_scroll.grid(row=0, column=1, sticky="ns")
         self.accounts_tree.configure(yscrollcommand=accounts_scroll.set)
+
+    @staticmethod
+    def _make_session_filename(phone: str) -> str:
+        digits = "".join(ch for ch in phone if ch.isdigit())
+        token = digits[-10:] if digits else "account"
+        suffix = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        return f"phone_{token}_{suffix}.session"
+
+    def request_account_code(self) -> None:
+        phone = self.account_phone_var.get().strip()
+        if not phone:
+            raise_message("Введи номер телефона в международном формате, например +79990000000.")
+            return
+
+        try:
+            settings = Settings.load()
+        except Exception as exc:
+            messagebox.showerror("Ошибка настроек", str(exc))
+            return
+
+        if self._account_login_backend is not None:
+            self.worker.submit(self._account_login_backend.disconnect())
+
+        session_file = self._make_session_filename(phone)
+        session_path = (self.session_dir / session_file).resolve()
+        self._account_login_backend = TelegramManagerBackend(
+            settings=settings,
+            db=self.db,
+            logger=self.logger,
+            session_path=session_path,
+        )
+        self._account_login_session_file = session_file
+        self.account_auth_status_var.set("Отправка кода подтверждения...")
+
+        future = self.worker.submit(self._account_login_backend.request_code(phone))
+        self._watch_account_future(
+            future,
+            self._on_account_code_requested,
+            "Запрос кода (аккаунты)",
+        )
+
+    def complete_account_sign_in(self) -> None:
+        if self._account_login_backend is None or not self._account_login_session_file:
+            raise_message("Сначала нажми 'Запросить код' в блоке добавления по номеру.")
+            return
+        future = self.worker.submit(
+            self._account_login_backend.sign_in(self.account_code_var.get(), self.account_password_var.get())
+        )
+        self._watch_account_future(
+            future,
+            self._on_account_sign_in_completed,
+            "Добавление аккаунта (код + 2FA)",
+        )
+
+    def _on_account_code_requested(self, result: AuthResult) -> None:
+        self.account_auth_status_var.set(result.message)
+        if result.status == "authorized":
+            self._finalize_account_add(result)
+
+    def _on_account_sign_in_completed(self, result: AuthResult) -> None:
+        self.account_auth_status_var.set(result.message)
+        if result.status != "authorized":
+            return
+        self._finalize_account_add(result)
+
+    def _finalize_account_add(self, result: AuthResult) -> None:
+        session_file = self._account_login_session_file
+        if not session_file:
+            raise_message("Не найден session-файл для нового аккаунта.")
+            return
+
+        account_name = self.account_name_var.get().strip()
+        if not account_name:
+            account_name = result.display_name or result.username or session_file.removesuffix(".session")
+
+        self.db.upsert_account(
+            session_file=session_file,
+            account_name=account_name,
+            status="live",
+        )
+        self.session_manager.set_active_session(session_file)
+        self.refresh_accounts()
+        self.account_code_var.set("")
+        self.account_password_var.set("")
+        self.account_name_var.set("")
+        if self._account_login_backend is not None:
+            self.worker.submit(self._account_login_backend.disconnect())
+        self._account_login_backend = None
+        self._account_login_session_file = None
+        self.account_auth_status_var.set(f"Аккаунт добавлен: {account_name}")
+        messagebox.showinfo("Готово", f"Аккаунт добавлен: {account_name}\nSession: {session_file}")
 
     def _build_relay_tab(self, frame: ttk.Frame) -> None:
         frame.columnconfigure(0, weight=1)
