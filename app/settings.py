@@ -123,7 +123,7 @@ class Settings:
             log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper() or "INFO",
             max_retries=_get_int("MAX_RETRIES", 5),
             request_retries=_get_int("REQUEST_RETRIES", 3),
-            connection_retries=_get_int("CONNECTION_RETRIES", 3),
+            connection_retries=_get_int("CONNECTION_RETRIES", 1),
             retry_delay_seconds=_get_float("RETRY_DELAY_SECONDS", 2.0),
             max_batch_size=_get_int("MAX_BATCH_SIZE", 100),
             max_scheduled_per_chat=_get_int("MAX_SCHEDULED_PER_CHAT", 100),
@@ -137,6 +137,8 @@ class Settings:
         )
         if settings.session_check_timeout_seconds <= 0:
             raise ConfigError("SESSION_CHECK_TIMEOUT_SECONDS должен быть положительным числом")
+        if settings.connection_retries <= 0:
+            raise ConfigError("CONNECTION_RETRIES должен быть положительным числом")
         has_proxy_fields = any([settings.proxy_type, settings.proxy_host, settings.proxy_port])
         if has_proxy_fields:
             if not settings.proxy_type or not settings.proxy_host or not settings.proxy_port:
@@ -174,7 +176,7 @@ class Settings:
             return "без прокси"
         auth_suffix = " + auth" if self.proxy_username else ""
         return f"через прокси {self.proxy_type.lower()}://{self.proxy_host}:{self.proxy_port}{auth_suffix}"
-         
+
     def ensure_directories(self) -> None:
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)

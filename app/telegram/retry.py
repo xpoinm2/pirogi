@@ -47,10 +47,12 @@ async def call_with_retry(
                 break
 
             delay = min(30, 2 ** (attempt - 1))
+            error_details = str(exc).strip() or exc.__class__.__name__
             logger.warning(
-                "%s | transient error %s | retry in %s sec | attempt %s/%s",
+                "%s | transient error %s: %s | retry in %s sec | attempt %s/%s",
                 description,
                 exc.__class__.__name__,
+                error_details,
                 delay,
                 attempt,
                 max_attempts,

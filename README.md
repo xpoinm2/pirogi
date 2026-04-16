@@ -101,6 +101,7 @@ telegram_manager_telethon/
    - optionally `DEFAULT_PHONE`
    - optionally `STRING_SESSION` if you already have one
    - optionally set `LOG_LEVEL=DEBUG` for detailed logs in CMD
+   - optionally tune `CONNECTION_RETRIES` (default `1`) if network is unstable
    - optionally tune `SESSION_CHECK_TIMEOUT_SECONDS` (default `25`)
 3. If `STRING_SESSION` is empty, a file session will be used.
 

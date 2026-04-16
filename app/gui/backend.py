@@ -67,12 +67,24 @@ class TelegramManagerBackend:
     async def connect(self) -> None:
         if self.client.is_connected():
             return
-        await call_with_retry(
-            description="connect_client",
-            logger=self.logger,
-            operation=self.client.connect,
-            max_attempts=self.settings.max_retries,
-        )
+        try:
+            await call_with_retry(
+                description="connect_client",
+                logger=self.logger,
+                operation=self.client.connect,
+                max_attempts=self.settings.max_retries,
+            )
+        except ConnectionError as exc:
+            proxy_hint = (
+                " Проверьте, что активный прокси живой и поддерживает Telegram (лучше SOCKS5)."
+                if self.settings.telethon_proxy
+                else " Если доступ к Telegram ограничен, включите VPN или рабочий SOCKS5-прокси."
+            )
+            raise AppError(
+                "Не удалось подключиться к Telegram после нескольких попыток."
+                " Проверьте интернет, системное время и параметры сети."
+                f"{proxy_hint}"
+            ) from exc
 
     async def disconnect(self) -> None:
         if self.client.is_connected():
