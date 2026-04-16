@@ -7,6 +7,7 @@ import traceback
 from datetime import UTC, datetime
 from concurrent.futures import Future
 from pathlib import Path
+from typing import Callable
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import filedialog, messagebox, ttk
@@ -300,6 +301,13 @@ class TelegramManagerGui:
         self._append_log(f"Database path: {self.settings.database_path}")
         self._append_log(f"Log directory: {self.settings.log_dir}")
 
+        ClipboardShortcutManager(self.root).install()
+        self._build_ui()
+        self._register_drop_targets()
+        self._append_log(f"Session path: {self.settings.session_path}")
+        self._append_log(f"Database path: {self.settings.database_path}")
+        self._append_log(f"Log directory: {self.settings.log_dir}")
+
     def _build_ui(self) -> None:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=1)
@@ -351,7 +359,11 @@ class TelegramManagerGui:
         )
         ttk.Label(frame, text="Phone").grid(row=1, column=0, sticky="w", pady=(12, 4))
         ttk.Entry(frame, textvariable=self.phone_var, width=32).grid(row=1, column=1, sticky="w", pady=(12, 4))
-        ttk.Button(frame, text="Запросить код", command=self.request_code).grid(row=1, column=2, sticky="w", padx=(8, 0))
+        ttk.Button(
+            frame,
+            text="Запросить код",
+            command=self._button_command("Запросить код", self.request_code),
+        ).grid(row=1, column=2, sticky="w", padx=(8, 0))
 
         ttk.Label(frame, text="Code").grid(row=2, column=0, sticky="w", pady=4)
         ttk.Entry(frame, textvariable=self.code_var, width=24).grid(row=2, column=1, sticky="w", pady=4)
@@ -361,8 +373,12 @@ class TelegramManagerGui:
 
         actions = ttk.Frame(frame)
         actions.grid(row=4, column=0, columnspan=3, sticky="w", pady=(12, 0))
-        ttk.Button(actions, text="Войти", command=self.sign_in).pack(side="left")
-        ttk.Button(actions, text="Проверить session", command=self.check_session).pack(side="left", padx=(8, 0))
+        ttk.Button(actions, text="Войти", command=self._button_command("Войти", self.sign_in)).pack(side="left")
+        ttk.Button(
+            actions,
+            text="Проверить session",
+            command=self._button_command("Проверить session", self.check_session),
+        ).pack(side="left", padx=(8, 0))
 
         info = ttk.LabelFrame(frame, text="Статус", padding=12)
         info.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(16, 0))
@@ -392,7 +408,11 @@ class TelegramManagerGui:
         dialogs_box.columnconfigure(1, weight=1)
         dialogs_box.rowconfigure(1, weight=1)
 
-        ttk.Button(dialogs_box, text="Загрузить диалоги", command=self.load_dialogs).grid(row=0, column=0, sticky="w")
+        ttk.Button(
+            dialogs_box,
+            text="Загрузить диалоги",
+            command=self._button_command("Загрузить диалоги", self.load_dialogs),
+        ).grid(row=0, column=0, sticky="w")
         ttk.Label(dialogs_box, text="Фильтр").grid(row=0, column=1, sticky="e", padx=(12, 6))
         search_entry = ttk.Entry(dialogs_box, textvariable=self.search_var)
         search_entry.grid(row=0, column=2, sticky="ew")
@@ -428,7 +448,11 @@ class TelegramManagerGui:
         file_row.grid(row=0, column=0, sticky="ew")
         file_row.columnconfigure(0, weight=1)
         ttk.Entry(file_row, textvariable=self.file_var).grid(row=0, column=0, sticky="ew")
-        ttk.Button(file_row, text="Browse...", command=self.browse_import_file).grid(row=0, column=1, padx=(8, 0))
+        ttk.Button(
+            file_row,
+            text="Browse...",
+            command=self._button_command("Browse...", self.browse_import_file),
+        ).grid(row=0, column=1, padx=(8, 0))
 
         self.drop_label = ttk.Label(
             import_box,
@@ -442,8 +466,16 @@ class TelegramManagerGui:
         options_row = ttk.Frame(import_box)
         options_row.grid(row=2, column=0, sticky="w", pady=(10, 0))
         ttk.Checkbutton(options_row, text="Dry run", variable=self.dry_run_var).pack(side="left")
-        ttk.Button(options_row, text="Предпросмотр", command=self.preview_import_file).pack(side="left", padx=(10, 0))
-        ttk.Button(options_row, text="Поставить в scheduled queue", command=self.schedule_file).pack(side="left", padx=(10, 0))
+        ttk.Button(
+            options_row,
+            text="Предпросмотр",
+            command=self._button_command("Предпросмотр", self.preview_import_file),
+        ).pack(side="left", padx=(10, 0))
+        ttk.Button(
+            options_row,
+            text="Поставить в scheduled queue",
+            command=self._button_command("Поставить в scheduled queue", self.schedule_file),
+        ).pack(side="left", padx=(10, 0))
 
         ttk.Label(import_box, textvariable=self.selected_chat_var, foreground="#555555").grid(
             row=3, column=0, sticky="w", pady=(10, 0)
@@ -483,10 +515,20 @@ class TelegramManagerGui:
         top = ttk.Frame(frame)
         top.grid(row=0, column=0, sticky="ew")
         ttk.Label(top, textvariable=self.selected_chat_var).pack(side="left")
-        ttk.Button(top, text="Обновить", command=self.refresh_scheduled).pack(side="left", padx=(12, 0))
-        ttk.Button(top, text="Отменить выбранные", command=self.cancel_selected_scheduled).pack(side="left", padx=(8, 0))
+        ttk.Button(top, text="Обновить", command=self._button_command("Обновить", self.refresh_scheduled)).pack(
+            side="left", padx=(12, 0)
+        )
+        ttk.Button(
+            top,
+            text="Отменить выбранные",
+            command=self._button_command("Отменить выбранные", self.cancel_selected_scheduled),
+        ).pack(side="left", padx=(8, 0))
         ttk.Entry(top, textvariable=self.cancel_ids_var, width=30).pack(side="left", padx=(16, 0))
-        ttk.Button(top, text="Отменить IDs", command=self.cancel_manual_ids).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            top,
+            text="Отменить IDs",
+            command=self._button_command("Отменить IDs", self.cancel_manual_ids),
+        ).pack(side="left", padx=(8, 0))
 
         box = ttk.LabelFrame(frame, text="Scheduled messages в Telegram", padding=10)
         box.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
@@ -521,7 +563,11 @@ class TelegramManagerGui:
 
         top = ttk.Frame(frame)
         top.grid(row=0, column=0, sticky="ew")
-        ttk.Button(top, text="Показать записи SQLite", command=self.refresh_local_records).pack(side="left")
+        ttk.Button(
+            top,
+            text="Показать записи SQLite",
+            command=self._button_command("Показать записи SQLite", self.refresh_local_records),
+        ).pack(side="left")
 
         box = ttk.LabelFrame(frame, text="Локальные записи scheduled_messages", padding=10)
         box.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
@@ -952,6 +998,13 @@ class MainMenuWindow:
         self._build_accounts_tab(accounts_tab)
         self.refresh_accounts()
 
+    def _button_command(self, label: str, command: Callable[[], None]) -> Callable[[], None]:
+        def _wrapped() -> None:
+            self.logger.info("Button clicked: %s", label)
+            command()
+
+        return _wrapped
+
     def _add_selectable_note(
         self,
         parent: tk.Misc,
@@ -1015,12 +1068,28 @@ class MainMenuWindow:
 
         controls = ttk.Frame(content)
         controls.grid(row=2, column=0, sticky="ew", pady=(14, 0))
-        ttk.Button(controls, text="Добавить аккаунт (Browse...)", command=self.add_account_via_browse).pack(side="left")
-        ttk.Button(controls, text="Обновить список", command=self.refresh_accounts).pack(side="left", padx=(8, 0))
-        ttk.Button(controls, text="Проверить сессию", command=self.check_selected_account_session).pack(
+        ttk.Button(
+            controls,
+            text="Добавить аккаунт (Browse...)",
+            command=self._button_command("Добавить аккаунт (Browse...)", self.add_account_via_browse),
+        ).pack(side="left")
+        ttk.Button(
+            controls,
+            text="Обновить список",
+            command=self._button_command("Обновить список", self.refresh_accounts),
+        ).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            controls,
+            text="Проверить сессию",
+            command=self._button_command("Проверить сессию", self.check_selected_account_session),
+        ).pack(
             side="left", padx=(8, 0)
         )
-        ttk.Button(controls, text="Удалить аккаунт", command=self.delete_selected_account).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            controls,
+            text="Удалить аккаунт",
+            command=self._button_command("Удалить аккаунт", self.delete_selected_account),
+        ).pack(side="left", padx=(8, 0))
         ttk.Label(
             controls,
             text=f"Session storage: {self.session_dir}",
@@ -1040,7 +1109,11 @@ class MainMenuWindow:
         ttk.Entry(phone_box, textvariable=self.account_phone_var, width=36).grid(
             row=1, column=1, sticky="ew", pady=4, padx=(8, 0)
         )
-        ttk.Button(phone_box, text="Запросить код", command=self.request_account_code).grid(
+        ttk.Button(
+            phone_box,
+            text="Запросить код",
+            command=self._button_command("Запросить код (аккаунт)", self.request_account_code),
+        ).grid(
             row=1, column=2, sticky="w", padx=(8, 0)
         )
 
@@ -1053,7 +1126,11 @@ class MainMenuWindow:
         ttk.Entry(phone_box, textvariable=self.account_password_var, width=24, show="*").grid(
             row=3, column=1, sticky="w", pady=4, padx=(8, 0)
         )
-        ttk.Button(phone_box, text="Добавить аккаунт", command=self.complete_account_sign_in).grid(
+        ttk.Button(
+            phone_box,
+            text="Добавить аккаунт",
+            command=self._button_command("Добавить аккаунт", self.complete_account_sign_in),
+        ).grid(
             row=3, column=2, sticky="w", padx=(8, 0)
         )
 
@@ -1235,13 +1312,33 @@ class MainMenuWindow:
 
         actions = ttk.Frame(frame)
         actions.grid(row=3, column=0, sticky="ew", pady=(12, 8))
-        ttk.Button(actions, text="Старт рассылки", command=self.start_relay_run).pack(side="left")
+        ttk.Button(
+            actions,
+            text="Старт рассылки",
+            command=self._button_command("Старт рассылки", self.start_relay_run),
+        ).pack(side="left")
         ttk.Label(actions, text="Run ID").pack(side="left", padx=(16, 6))
         ttk.Entry(actions, textvariable=self.relay_run_id_var, width=10).pack(side="left")
-        ttk.Button(actions, text="Статус", command=self.relay_status).pack(side="left", padx=(8, 0))
-        ttk.Button(actions, text="Пауза", command=self.relay_pause).pack(side="left", padx=(8, 0))
-        ttk.Button(actions, text="Возобновить", command=self.relay_resume).pack(side="left", padx=(8, 0))
-        ttk.Button(actions, text="Обновить список run", command=self.refresh_relay_runs).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            actions,
+            text="Статус",
+            command=self._button_command("Статус", self.relay_status),
+        ).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            actions,
+            text="Пауза",
+            command=self._button_command("Пауза", self.relay_pause),
+        ).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            actions,
+            text="Возобновить",
+            command=self._button_command("Возобновить", self.relay_resume),
+        ).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            actions,
+            text="Обновить список run",
+            command=self._button_command("Обновить список run", self.refresh_relay_runs),
+        ).pack(side="left", padx=(8, 0))
 
         ttk.Label(frame, textvariable=self.relay_status_var, foreground="#0b5ed7").grid(row=4, column=0, sticky="w")
 
