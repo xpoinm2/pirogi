@@ -16,7 +16,7 @@ from tkinter import TclError
 from urllib.parse import urlparse
 
 from app.db import Database
-from app.exceptions import AppError
+from app.exceptions import AppError, ConfigError
 from app.gui.async_worker import AsyncWorker
 from app.gui.backend import AuthResult, TelegramManagerBackend
 from app.logging_setup import setup_logging
@@ -1467,12 +1467,20 @@ class MainMenuWindow:
 
         session_file = self._make_session_filename(phone)
         session_path = (self.session_dir / session_file).resolve()
-        self._account_login_backend = TelegramManagerBackend(
-            settings=settings,
-            db=self.db,
-            logger=self.logger,
-            session_path=session_path,
-        )
+        try:
+            self._account_login_backend = TelegramManagerBackend(
+                settings=settings,
+                db=self.db,
+                logger=self.logger,
+                session_path=session_path,
+            )
+        except ConfigError as exc:
+            self.account_auth_status_var.set("Не удалось инициализировать подключение: ошибка настроек.")
+            messagebox.showerror(
+                "Ошибка настроек",
+                str(exc),
+            )
+            return
         self._account_login_session_file = session_file
         self.account_auth_status_var.set(
             "Этап 1/3: подключение к Telegram и запрос кода. "
