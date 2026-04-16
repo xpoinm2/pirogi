@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import logging
 from pathlib import Path
 
@@ -7,6 +8,19 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 
 from app.settings import Settings
+
+
+def _resolve_proxy(settings: Settings) -> tuple[str, str, int, str | None, str | None] | None:
+    proxy = settings.telethon_proxy
+    if proxy is None:
+        return None
+    if importlib.util.find_spec("python_socks") is None:
+        logging.getLogger("telethon").warning(
+            "Прокси настроен, но пакет python-socks не установлен. "
+            "Запускаем подключение без прокси, чтобы избежать ошибки Telethon."
+        )
+        return None
+    return proxy
 
 
 def create_client(settings: Settings, *, session_path: Path | None = None) -> TelegramClient:
@@ -21,7 +35,7 @@ def create_client(settings: Settings, *, session_path: Path | None = None) -> Te
         session=session,
         api_id=settings.api_id,
         api_hash=settings.api_hash,
-        proxy=settings.telethon_proxy,
+        proxy=_resolve_proxy(settings),
         request_retries=settings.request_retries,
         connection_retries=settings.connection_retries,
         retry_delay=settings.retry_delay_seconds,
