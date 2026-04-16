@@ -21,6 +21,7 @@ from app.gui.async_worker import AsyncWorker
 from app.gui.backend import AuthResult, TelegramManagerBackend
 from app.logging_setup import setup_logging
 from app.models import DialogInfo, ImportMessageItem, ScheduleBatchResult, ScheduledMessageInfo
+from app.services.proxy_store import ProxyEntry, ProxyStore
 from app.services.session_manager import SessionManager
 from app.settings import PROJECT_ROOT, Settings
 from app.utils import format_dt, truncate_text
@@ -959,9 +960,19 @@ class MainMenuWindow:
         )
         self._account_login_backend: TelegramManagerBackend | None = None
         self._account_login_session_file: str | None = None
+        self.proxy_mode_var = tk.StringVar(value="HTTP")
+        self.proxy_title_var = tk.StringVar()
+        self.proxy_host_var = tk.StringVar()
+        self.proxy_port_var = tk.StringVar()
+        self.proxy_username_var = tk.StringVar()
+        self.proxy_password_var = tk.StringVar()
+        self.proxy_state_var = tk.StringVar(value="Сеть: без прокси.")
 
         self.session_dir = self._resolve_storage_path("SESSION_DIR", "data/sessions")
         self.database_path = self._resolve_storage_path("DATABASE_PATH", "data/telegram_manager.db")
+        self.proxy_store = ProxyStore(self._resolve_storage_path("PROXY_STORAGE_PATH", "data/proxies.json"))
+        self.proxy_entries: list[ProxyEntry] = []
+        self.active_proxy_id: str | None = None
         self.db = Database(self.database_path)
         self.db.init()
         self.session_manager = SessionManager(session_dir=self.session_dir)
@@ -987,15 +998,19 @@ class MainMenuWindow:
         main_menu_tab = ttk.Frame(notebook, padding=16)
         relay_tab = ttk.Frame(notebook, padding=16)
         accounts_tab = ttk.Frame(notebook, padding=16)
+        proxy_tab = ttk.Frame(notebook, padding=16)
         notebook.add(main_menu_tab, text="Главное меню")
         notebook.add(relay_tab, text="Рассылка из чата")
         notebook.add(accounts_tab, text="Аккаунты")
+        notebook.add(proxy_tab, text="Прокси")
 
         ttk.Label(main_menu_tab, text="Главное меню", font=("Segoe UI", 16, "bold")).pack(anchor="w")
         self._add_selectable_note(main_menu_tab, "Раздел готов к наполнению функциями.", pady=(8, 0))
 
         self._build_relay_tab(relay_tab)
         self._build_accounts_tab(accounts_tab)
+        self._build_proxy_tab(proxy_tab)
+        self._load_proxy_state()
         self.refresh_accounts()
 
     def _button_command(self, label: str, command: Callable[[], None]) -> Callable[[], None]:
@@ -1181,6 +1196,107 @@ class MainMenuWindow:
         accounts_scroll.grid(row=0, column=1, sticky="ns")
         self.accounts_tree.configure(yscrollcommand=accounts_scroll.set)
 
+    def _build_proxy_tab(self, frame: ttk.Frame) -> None:
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(2, weight=1)
+
+        ttk.Label(frame, text="Прокси", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, sticky="w")
+        self._add_selectable_note(
+            frame,
+            (
+                "Добавь прокси в одном из режимов: HTTP, SOCKS или Dynamic.\n"
+                "Активен только один прокси для всего софта. При переключении новые подключения идут через него."
+            ),
+            grid={"row": 1, "column": 0, "sticky": "ew", "pady": (8, 10)},
+        )
+
+        form = ttk.LabelFrame(frame, text="Добавить прокси", padding=10)
+        form.grid(row=2, column=0, sticky="ew")
+        for idx in range(6):
+            form.columnconfigure(idx, weight=1 if idx in (1, 3, 5) else 0)
+
+        ttk.Label(form, text="Режим").grid(row=0, column=0, sticky="w", pady=4)
+        mode_combo = ttk.Combobox(
+            form,
+            textvariable=self.proxy_mode_var,
+            values=("HTTP", "SOCKS", "Dynamic"),
+            state="readonly",
+            width=14,
+        )
+        mode_combo.grid(row=0, column=1, sticky="w", pady=4, padx=(8, 0))
+        mode_combo.current(0)
+
+        ttk.Label(form, text="Название").grid(row=0, column=2, sticky="w", pady=4, padx=(12, 0))
+        ttk.Entry(form, textvariable=self.proxy_title_var, width=30).grid(row=0, column=3, sticky="ew", pady=4, padx=(8, 0))
+
+        ttk.Label(form, text="Host/IP").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Entry(form, textvariable=self.proxy_host_var, width=26).grid(row=1, column=1, sticky="ew", pady=4, padx=(8, 0))
+
+        ttk.Label(form, text="Port").grid(row=1, column=2, sticky="w", pady=4, padx=(12, 0))
+        ttk.Entry(form, textvariable=self.proxy_port_var, width=12).grid(row=1, column=3, sticky="w", pady=4, padx=(8, 0))
+
+        ttk.Label(form, text="Username").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Entry(form, textvariable=self.proxy_username_var, width=26).grid(row=2, column=1, sticky="ew", pady=4, padx=(8, 0))
+
+        ttk.Label(form, text="Password").grid(row=2, column=2, sticky="w", pady=4, padx=(12, 0))
+        ttk.Entry(form, textvariable=self.proxy_password_var, width=18, show="*").grid(
+            row=2, column=3, sticky="w", pady=4, padx=(8, 0)
+        )
+
+        controls = ttk.Frame(form)
+        controls.grid(row=3, column=0, columnspan=6, sticky="ew", pady=(8, 0))
+        ttk.Button(
+            controls,
+            text="Добавить и сделать активным",
+            command=self._button_command("Добавить прокси", self.add_proxy_and_activate),
+        ).pack(side="left")
+        ttk.Button(
+            controls,
+            text="Активировать выбранный",
+            command=self._button_command("Активировать прокси", self.activate_selected_proxy),
+        ).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            controls,
+            text="Удалить выбранный",
+            command=self._button_command("Удалить прокси", self.delete_selected_proxy),
+        ).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            controls,
+            text="Отключить прокси",
+            command=self._button_command("Отключить прокси", self.disable_proxy),
+        ).pack(side="left", padx=(8, 0))
+
+        ttk.Label(frame, textvariable=self.proxy_state_var, foreground="#0b5ed7").grid(
+            row=3, column=0, sticky="w", pady=(10, 6)
+        )
+
+        table = ttk.LabelFrame(frame, text="Сохранённые прокси", padding=10)
+        table.grid(row=4, column=0, sticky="nsew")
+        frame.rowconfigure(4, weight=1)
+        table.columnconfigure(0, weight=1)
+        table.rowconfigure(0, weight=1)
+
+        self.proxy_tree = ttk.Treeview(
+            table,
+            columns=("title", "mode", "endpoint", "auth", "active"),
+            show="headings",
+            height=12,
+        )
+        for column, text, width in (
+            ("title", "Название", 220),
+            ("mode", "Тип", 100),
+            ("endpoint", "Endpoint", 320),
+            ("auth", "Auth", 110),
+            ("active", "Статус", 110),
+        ):
+            self.proxy_tree.heading(column, text=text)
+            self.proxy_tree.column(column, width=width, anchor="w")
+        self.proxy_tree.grid(row=0, column=0, sticky="nsew")
+
+        scroll = ttk.Scrollbar(table, orient="vertical", command=self.proxy_tree.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.proxy_tree.configure(yscrollcommand=scroll.set)
+
     @staticmethod
     def _make_session_filename(phone: str) -> str:
         digits = "".join(ch for ch in phone if ch.isdigit())
@@ -1191,6 +1307,150 @@ class MainMenuWindow:
     @staticmethod
     def _proxy_status_text(settings: Settings) -> str:
         return f"Сеть: {settings.proxy_summary}."
+
+    def _load_proxy_state(self) -> None:
+        self.proxy_entries, self.active_proxy_id = self.proxy_store.load()
+        self._apply_proxy_env()
+        self._refresh_proxy_table()
+
+    def _refresh_proxy_table(self) -> None:
+        for item in self.proxy_tree.get_children():
+            self.proxy_tree.delete(item)
+
+        for entry in self.proxy_entries:
+            self.proxy_tree.insert(
+                "",
+                "end",
+                iid=entry.id,
+                values=(
+                    entry.title,
+                    entry.mode,
+                    entry.endpoint,
+                    "yes" if entry.username else "no",
+                    "активный" if entry.id == self.active_proxy_id else "не активен",
+                ),
+            )
+
+    def _persist_proxy_state(self) -> None:
+        self.proxy_store.save(self.proxy_entries, self.active_proxy_id)
+        self._refresh_proxy_table()
+
+    def _reset_backends(self) -> None:
+        if self._account_login_backend is not None:
+            self.worker.submit(self._account_login_backend.disconnect())
+            self._account_login_backend = None
+            self._account_login_session_file = None
+        if self.backend is not None:
+            self.worker.submit(self.backend.disconnect())
+            self.backend = None
+            self.settings = None
+
+    def _apply_proxy_env(self) -> None:
+        active = next((entry for entry in self.proxy_entries if entry.id == self.active_proxy_id), None)
+        if active is None:
+            for key in (
+                "TG_PROXY_TYPE",
+                "TG_PROXY_HOST",
+                "TG_PROXY_PORT",
+                "TG_PROXY_USERNAME",
+                "TG_PROXY_PASSWORD",
+            ):
+                os.environ.pop(key, None)
+            self.proxy_state_var.set("Сеть: без прокси.")
+            return
+
+        os.environ["TG_PROXY_TYPE"] = active.scheme
+        os.environ["TG_PROXY_HOST"] = active.host
+        os.environ["TG_PROXY_PORT"] = str(active.port)
+        if active.username:
+            os.environ["TG_PROXY_USERNAME"] = active.username
+        else:
+            os.environ.pop("TG_PROXY_USERNAME", None)
+        if active.password:
+            os.environ["TG_PROXY_PASSWORD"] = active.password
+        else:
+            os.environ.pop("TG_PROXY_PASSWORD", None)
+        auth_suffix = " + auth" if active.username else ""
+        self.proxy_state_var.set(f"Сеть: через прокси {active.scheme}://{active.host}:{active.port}{auth_suffix}.")
+
+    def _parse_proxy_form(self) -> ProxyEntry | None:
+        mode = self.proxy_mode_var.get().strip() or "HTTP"
+        title = self.proxy_title_var.get().strip() or f"{mode} proxy"
+        host = self.proxy_host_var.get().strip()
+        port_raw = self.proxy_port_var.get().strip()
+        username = self.proxy_username_var.get().strip() or None
+        password = self.proxy_password_var.get().strip() or None
+
+        if not host:
+            raise_message("Укажи host/IP прокси.")
+            return None
+        try:
+            port = int(port_raw)
+        except ValueError:
+            raise_message("Port должен быть целым числом.")
+            return None
+        if port <= 0:
+            raise_message("Port должен быть положительным числом.")
+            return None
+
+        mode_lower = mode.lower()
+        scheme = "http" if mode_lower == "http" else "socks5"
+        return ProxyStore.create_entry(
+            title=title,
+            mode=mode,
+            scheme=scheme,
+            host=host,
+            port=port,
+            username=username,
+            password=password,
+        )
+
+    def add_proxy_and_activate(self) -> None:
+        entry = self._parse_proxy_form()
+        if entry is None:
+            return
+        self.proxy_entries.append(entry)
+        self.active_proxy_id = entry.id
+        self._persist_proxy_state()
+        self._apply_proxy_env()
+        self._reset_backends()
+        self.account_auth_status_var.set("Прокси сохранён и активирован. Новые подключения будут через выбранный прокси.")
+        self.proxy_title_var.set("")
+        self.proxy_host_var.set("")
+        self.proxy_port_var.set("")
+        self.proxy_username_var.set("")
+        self.proxy_password_var.set("")
+
+    def activate_selected_proxy(self) -> None:
+        selected = self.proxy_tree.selection()
+        if not selected:
+            raise_message("Выбери прокси в таблице.")
+            return
+        self.active_proxy_id = selected[0]
+        self._persist_proxy_state()
+        self._apply_proxy_env()
+        self._reset_backends()
+        self.account_auth_status_var.set("Активный прокси переключён. Следующие действия пойдут через него.")
+
+    def delete_selected_proxy(self) -> None:
+        selected = self.proxy_tree.selection()
+        if not selected:
+            raise_message("Выбери прокси в таблице.")
+            return
+        selected_id = selected[0]
+        self.proxy_entries = [entry for entry in self.proxy_entries if entry.id != selected_id]
+        if self.active_proxy_id == selected_id:
+            self.active_proxy_id = None
+        self._persist_proxy_state()
+        self._apply_proxy_env()
+        self._reset_backends()
+
+    def disable_proxy(self) -> None:
+        self.active_proxy_id = None
+        self._persist_proxy_state()
+        self._apply_proxy_env()
+        self._reset_backends()
+
 
     def request_account_code(self) -> None:
         phone = self.account_phone_var.get().strip()
