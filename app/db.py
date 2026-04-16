@@ -321,8 +321,8 @@ class Database:
                 """,
                 (status, now, account_id),
             )
-            
-        def create_relay_run(
+
+    def create_relay_run(
         self,
         *,
         mode: str,
@@ -335,7 +335,7 @@ class Database:
         long_pause_max_seconds: int,
         dry_run: bool,
     ) -> int:
-            now = _to_iso(datetime.now(UTC))
+        now = _to_iso(datetime.now(UTC))
         with self.connect() as conn:
             cursor = conn.execute(
                 """
