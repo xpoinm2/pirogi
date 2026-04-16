@@ -21,6 +21,7 @@ def create_client(settings: Settings, *, session_path: Path | None = None) -> Te
         session=session,
         api_id=settings.api_id,
         api_hash=settings.api_hash,
+        proxy=settings.telethon_proxy,
         request_retries=settings.request_retries,
         connection_retries=settings.connection_retries,
         retry_delay=settings.retry_delay_seconds,

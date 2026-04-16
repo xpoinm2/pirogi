@@ -87,6 +87,11 @@ class Settings:
     max_scheduled_per_chat: int
     dialog_fetch_limit: int
     session_check_timeout_seconds: int
+    proxy_type: str | None
+    proxy_host: str | None
+    proxy_port: int | None
+    proxy_username: str | None
+    proxy_password: str | None
     project_root: Path = PROJECT_ROOT
 
     @classmethod
@@ -124,9 +129,22 @@ class Settings:
             max_scheduled_per_chat=_get_int("MAX_SCHEDULED_PER_CHAT", 100),
             dialog_fetch_limit=_get_int("DIALOG_FETCH_LIMIT", 200),
             session_check_timeout_seconds=_get_int("SESSION_CHECK_TIMEOUT_SECONDS", 25),
+            proxy_type=_get_optional("TG_PROXY_TYPE"),
+            proxy_host=_get_optional("TG_PROXY_HOST"),
+            proxy_port=_get_int("TG_PROXY_PORT", 0) or None,
+            proxy_username=_get_optional("TG_PROXY_USERNAME"),
+            proxy_password=_get_optional("TG_PROXY_PASSWORD"),
         )
         if settings.session_check_timeout_seconds <= 0:
             raise ConfigError("SESSION_CHECK_TIMEOUT_SECONDS должен быть положительным числом")
+        has_proxy_fields = any([settings.proxy_type, settings.proxy_host, settings.proxy_port])
+        if has_proxy_fields:
+            if not settings.proxy_type or not settings.proxy_host or not settings.proxy_port:
+                raise ConfigError(
+                    "Для прокси нужно задать TG_PROXY_TYPE, TG_PROXY_HOST и TG_PROXY_PORT вместе"
+                )
+            if settings.proxy_port <= 0:
+                raise ConfigError("TG_PROXY_PORT должен быть положительным числом")
         settings.ensure_directories()
         return settings
 
@@ -138,6 +156,18 @@ class Settings:
     def session_path(self) -> Path:
         return self.session_dir / f"{self.session_name}.session"
 
+    @property
+    def telethon_proxy(self) -> tuple[str, str, int, str | None, str | None] | None:
+        if not self.proxy_type or not self.proxy_host or not self.proxy_port:
+            return None
+        return (
+            self.proxy_type.lower(),
+            self.proxy_host,
+            self.proxy_port,
+            self.proxy_username,
+            self.proxy_password,
+        )
+        
     def ensure_directories(self) -> None:
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)

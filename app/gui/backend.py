@@ -54,6 +54,16 @@ class TelegramManagerBackend:
         self._pending_phone: str | None = None
         self._phone_code_hash: str | None = None
 
+    async def _run_with_timeout(self, *, label: str, operation):
+        timeout_seconds = self.settings.session_check_timeout_seconds
+        try:
+            return await asyncio.wait_for(operation(), timeout=timeout_seconds)
+        except asyncio.TimeoutError as exc:
+            self.logger.error("%s превысило лимит ожидания: %s сек", label, timeout_seconds)
+            raise AppError(
+                "Telegram долго не отвечает. Проверьте VPN/прокси и интернет, затем повторите попытку."
+            ) from exc
+
     async def connect(self) -> None:
         if self.client.is_connected():
             return
@@ -125,11 +135,14 @@ class TelegramManagerBackend:
         if current.status == "authorized":
             return current
 
-        sent_code = await call_with_retry(
-            description="send_code_request",
-            logger=self.logger,
-            operation=lambda: self.client.send_code_request(phone),
-            max_attempts=self.settings.max_retries,
+        sent_code = await self._run_with_timeout(
+            label="Запрос кода",
+            operation=lambda: call_with_retry(
+                description="send_code_request",
+                logger=self.logger,
+                operation=lambda: self.client.send_code_request(phone),
+                max_attempts=self.settings.max_retries,
+            ),
         )
 
         self._pending_phone = phone
@@ -155,15 +168,18 @@ class TelegramManagerBackend:
             raise AppError("Введите код из Telegram / SMS.")
 
         try:
-            await call_with_retry(
-                description="sign_in",
-                logger=self.logger,
-                operation=lambda: self.client.sign_in(
-                    phone=self._pending_phone,
-                    code=clean_code,
-                    phone_code_hash=self._phone_code_hash,
+            await self._run_with_timeout(
+                label="Вход по коду",
+                operation=lambda: call_with_retry(
+                    description="sign_in",
+                    logger=self.logger,
+                    operation=lambda: self.client.sign_in(
+                        phone=self._pending_phone,
+                        code=clean_code,
+                        phone_code_hash=self._phone_code_hash,
+                    ),
+                    max_attempts=self.settings.max_retries,
                 ),
-                max_attempts=self.settings.max_retries,
             )
         except SessionPasswordNeededError:
             clean_password = (password or "").strip()
@@ -173,18 +189,24 @@ class TelegramManagerBackend:
                     message="Для этого аккаунта включён 2FA пароль. Введите password и нажмите 'Войти'.",
                 )
 
-            await call_with_retry(
-                description="sign_in_2fa",
-                logger=self.logger,
-                operation=lambda: self.client.sign_in(password=clean_password),
-                max_attempts=self.settings.max_retries,
+            await self._run_with_timeout(
+                label="Вход с 2FA",
+                operation=lambda: call_with_retry(
+                    description="sign_in_2fa",
+                    logger=self.logger,
+                    operation=lambda: self.client.sign_in(password=clean_password),
+                    max_attempts=self.settings.max_retries,
+                ),
             )
 
-        me = await call_with_retry(
-            description="get_me_after_sign_in",
-            logger=self.logger,
-            operation=self.client.get_me,
-            max_attempts=self.settings.max_retries,
+        me = await self._run_with_timeout(
+            label="Получение профиля после входа",
+            operation=lambda: call_with_retry(
+                description="get_me_after_sign_in",
+                logger=self.logger,
+                operation=self.client.get_me,
+                max_attempts=self.settings.max_retries,
+            ),
         )
         self._pending_phone = None
         self._phone_code_hash = None
