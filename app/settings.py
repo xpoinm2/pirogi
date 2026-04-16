@@ -87,6 +87,7 @@ class Settings:
     max_scheduled_per_chat: int
     dialog_fetch_limit: int
     project_root: Path = PROJECT_ROOT
+    session_check_timeout_seconds: int
 
     @classmethod
     def load(cls) -> "Settings":
@@ -122,7 +123,10 @@ class Settings:
             max_batch_size=_get_int("MAX_BATCH_SIZE", 100),
             max_scheduled_per_chat=_get_int("MAX_SCHEDULED_PER_CHAT", 100),
             dialog_fetch_limit=_get_int("DIALOG_FETCH_LIMIT", 200),
+            session_check_timeout_seconds=_get_int("SESSION_CHECK_TIMEOUT_SECONDS", 25),
         )
+        if settings.session_check_timeout_seconds <= 0:
+            raise ConfigError("SESSION_CHECK_TIMEOUT_SECONDS должен быть положительным числом")
         settings.ensure_directories()
         return settings
 

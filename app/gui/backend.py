@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,19 +69,50 @@ class TelegramManagerBackend:
             await self.client.disconnect()
 
     async def check_session(self) -> AuthResult:
+        self.logger.info("Проверка session начата")
         await self.connect()
-        if not await self.client.is_user_authorized():
+        timeout_seconds = self.settings.session_check_timeout_seconds
+        try:
+            is_authorized = await asyncio.wait_for(
+                call_with_retry(
+                    description="check_session_is_user_authorized",
+                    logger=self.logger,
+                    operation=self.client.is_user_authorized,
+                    max_attempts=self.settings.max_retries,
+                ),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            self.logger.error("Проверка session превысила лимит ожидания: %s сек", timeout_seconds)
+            raise AppError(
+                "Проверка session заняла слишком много времени. "
+                "Проверьте интернет/прокси и повторите попытку."
+            ) from exc
+
+        if not is_authorized:
+            self.logger.info("Session не авторизована")
             return AuthResult(
                 status="not_authorized",
                 message="Session не авторизована. Запроси код и заверши вход.",
             )
 
-        me = await call_with_retry(
-            description="get_me",
-            logger=self.logger,
-            operation=self.client.get_me,
-            max_attempts=self.settings.max_retries,
-        )
+        try:
+            me = await asyncio.wait_for(
+                call_with_retry(
+                    description="get_me",
+                    logger=self.logger,
+                    operation=self.client.get_me,
+                    max_attempts=self.settings.max_retries,
+                ),
+                timeout=timeout_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            self.logger.error("Получение профиля превысило лимит ожидания: %s сек", timeout_seconds)
+            raise AppError(
+                "Session авторизована, но Telegram долго отвечает при чтении профиля. "
+                "Попробуйте ещё раз."
+            ) from exc
+        self.logger.info("Session авторизована: user_id=%s", getattr(me, "id", None))
         return self._build_authorized_result(me)
 
     async def request_code(self, phone_number: str) -> AuthResult:

@@ -22,7 +22,11 @@ async def call_with_retry(
 
     for attempt in range(1, max_attempts + 1):
         try:
-            return await operation()
+            logger.debug("%s | attempt %s/%s", description, attempt, max_attempts)
+            result = await operation()
+            if attempt > 1:
+                logger.info("%s | successful on attempt %s/%s", description, attempt, max_attempts)
+            return result
         except FloodWaitError as exc:
             last_error = exc
             if attempt >= max_attempts:
