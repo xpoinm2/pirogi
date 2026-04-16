@@ -306,6 +306,22 @@ class Database:
             rows = conn.execute(query, params).fetchall()
         return rows
 
+    def get_account(self, account_id: int) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
+
+    def update_account_status(self, account_id: int, status: str) -> None:
+        now = _to_iso(datetime.now(UTC))
+        with self.connect() as conn:
+            conn.execute(
+                """
+                UPDATE accounts
+                SET status = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (status, now, account_id),
+            )
+            
         def create_relay_run(
         self,
         *,

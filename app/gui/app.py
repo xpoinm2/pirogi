@@ -985,6 +985,10 @@ class MainMenuWindow:
         controls.grid(row=2, column=0, sticky="ew", pady=(14, 0))
         ttk.Button(controls, text="Добавить аккаунт (Browse...)", command=self.add_account_via_browse).pack(side="left")
         ttk.Button(controls, text="Обновить список", command=self.refresh_accounts).pack(side="left", padx=(8, 0))
+        ttk.Button(controls, text="Проверить сессию", command=self.check_selected_account_session).pack(
+            side="left", padx=(8, 0)
+        )
+        ttk.Button(controls, text="Удалить аккаунт", command=self.delete_selected_account).pack(side="left", padx=(8, 0))
         ttk.Label(
             controls,
             text=f"Session storage: {self.session_dir}",
@@ -1152,6 +1156,126 @@ class MainMenuWindow:
             f"Аккаунт добавлен: {imported.destination.name}{suffix}",
         )
 
+    def delete_selected_account(self) -> None:
+        selected = self.accounts_tree.selection()
+        if not selected:
+            raise_message("Выбери аккаунт в таблице.")
+            return
+
+        values = self.accounts_tree.item(selected[0], "values")
+        account_id = int(values[0])
+        account_name = str(values[1] or "")
+        session_file = str(values[2] or "")
+
+        if not messagebox.askyesno(
+            "Удалить аккаунт",
+            f"Удалить аккаунт '{account_name or session_file}'?\n"
+            "Запись получит статус 'удалён', а session-файл будет удалён с диска.",
+        ):
+            return
+
+        self.db.update_account_status(account_id, "deleted")
+        session_path = (self.session_dir / session_file).resolve()
+        if session_file and session_path.exists() and session_path.is_file():
+            try:
+                session_path.unlink()
+            except OSError as exc:
+                messagebox.showwarning(
+                    "Session не удалён",
+                    f"Статус аккаунта обновлён, но session-файл не удалён:\n{exc}",
+                )
+
+        active_session = self.session_manager.get_active_session_path()
+        if active_session is not None and active_session.name == session_file:
+            self.session_manager.clear_active_session()
+            self.backend = None
+            self.settings = None
+        self.refresh_accounts()
+
+    def check_selected_account_session(self) -> None:
+        selected = self.accounts_tree.selection()
+        if not selected:
+            raise_message("Выбери аккаунт в таблице.")
+            return
+
+        values = self.accounts_tree.item(selected[0], "values")
+        account_id = int(values[0])
+        account_name = str(values[1] or "")
+        session_file = str(values[2] or "")
+        session_path = (self.session_dir / session_file).resolve()
+
+        if not session_file or not session_path.exists():
+            self.db.update_account_status(account_id, "deleted")
+            self.refresh_accounts()
+            messagebox.showerror("Session не найдена", f"Файл сессии не найден:\n{session_path}")
+            return
+
+        self.session_manager.set_active_session(session_file)
+        self.backend = None
+        self.settings = None
+        future = self.worker.submit(self._check_account_session(session_path))
+        self._watch_account_future(
+            future,
+            lambda result: self._on_account_session_checked(account_id, account_name, session_file, result),
+            "Проверка session",
+        )
+
+    async def _check_account_session(self, session_path: Path) -> AuthResult:
+        settings = Settings.load()
+        backend = TelegramManagerBackend(
+            settings=settings,
+            db=self.db,
+            logger=self.logger,
+            session_path=session_path,
+        )
+        try:
+            return await backend.check_session()
+        finally:
+            await backend.disconnect()
+
+    def _watch_account_future(self, future: Future[object], on_success, action_name: str) -> None:
+        self.accounts_summary_var.set(f"{action_name}...")
+
+        def _done_callback(done_future: Future[object]) -> None:
+            self.root.after(0, self._handle_account_future_result, done_future, on_success, action_name)
+
+        future.add_done_callback(_done_callback)
+
+    def _handle_account_future_result(self, future: Future[object], on_success, action_name: str) -> None:
+        try:
+            result = future.result()
+        except Exception as exc:
+            self.logger.exception("GUI action failed: %s", action_name)
+            messagebox.showerror("Ошибка", str(exc))
+            self.refresh_accounts()
+            return
+        on_success(result)
+
+    def _on_account_session_checked(
+        self,
+        account_id: int,
+        account_name: str,
+        session_file: str,
+        result: AuthResult,
+    ) -> None:
+        if result.status == "authorized":
+            self.db.update_account_status(account_id, "live")
+            self.refresh_accounts()
+            user_display = result.display_name or result.username or "без имени"
+            messagebox.showinfo(
+                "Session валидна",
+                f"Аккаунт: {account_name or session_file}\n"
+                f"Пользователь: {user_display}\n"
+                f"ID: {result.user_id}",
+            )
+            return
+
+        self.db.update_account_status(account_id, "frozen")
+        self.refresh_accounts()
+        messagebox.showwarning(
+            "Session требует вход",
+            f"Аккаунт: {account_name or session_file}\n{result.message}",
+        )
     def refresh_accounts(self) -> None:
         rows = [dict(row) for row in self.db.list_accounts(include_deleted=True)]
         for item in self.accounts_tree.get_children():
