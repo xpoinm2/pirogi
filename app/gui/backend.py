@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -332,6 +333,37 @@ class TelegramManagerBackend:
             max_attempts=self.settings.max_retries,
         )
 
+    async def send_text_pack(
+        self,
+        *,
+        target_chat_id: int,
+        messages: list[str],
+        delay_min: int,
+        delay_max: int,
+    ) -> dict[str, int]:
+        await self._ensure_authorized()
+        chat_ref = await self.client.get_input_entity(target_chat_id)
+
+        sent_count = 0
+        for index, message_text in enumerate(messages):
+            await call_with_retry(
+                description=f"send_text_pack_message_{index + 1}",
+                logger=self.logger,
+                operation=lambda text=message_text: self.client.send_message(
+                    entity=chat_ref,
+                    message=text,
+                ),
+                max_attempts=self.settings.max_retries,
+            )
+            sent_count += 1
+            if index < len(messages) - 1:
+                await asyncio.sleep(random.randint(delay_min, delay_max))
+
+        return {
+            "sent_count": sent_count,
+            "total_count": len(messages),
+        }
+        
     async def relay_status(self, *, run_id: int) -> dict[str, object]:
         summary = self.db.relay_run_summary(run_id)
         if summary is None:

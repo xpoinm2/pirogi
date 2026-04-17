@@ -987,6 +987,15 @@ class MainMenuWindow:
         self.relay_dry_run_var = tk.BooleanVar(value=False)
         self.relay_run_id_var = tk.StringVar()
         self.relay_status_var = tk.StringVar(value="Готово к запуску рассылки.")
+        self.hundred_account_var = tk.StringVar()
+        self.hundred_chat_var = tk.StringVar()
+        self.hundred_delay_min_var = tk.StringVar(value="180")
+        self.hundred_delay_max_var = tk.StringVar(value="360")
+        self.hundred_status_var = tk.StringVar(value="Готово к запуску 100 сообщений.")
+        self.hundred_account_options: dict[str, dict[str, object]] = {}
+        self.hundred_backends_by_account: dict[int, TelegramManagerBackend] = {}
+        self.hundred_tasks: dict[str, dict[str, object]] = {}
+        self.hundred_task_counter = 0
 
         root.columnconfigure(0, weight=1)
         root.rowconfigure(0, weight=1)
@@ -996,10 +1005,12 @@ class MainMenuWindow:
 
         main_menu_tab = ttk.Frame(notebook, padding=16)
         relay_tab = ttk.Frame(notebook, padding=16)
+        hundred_tab = ttk.Frame(notebook, padding=16)
         accounts_tab = ttk.Frame(notebook, padding=16)
         proxy_tab = ttk.Frame(notebook, padding=16)
         notebook.add(main_menu_tab, text="Главное меню")
         notebook.add(relay_tab, text="Рассылка из чата")
+        notebook.add(hundred_tab, text="100 сообщений")
         notebook.add(accounts_tab, text="Аккаунты")
         notebook.add(proxy_tab, text="Прокси")
 
@@ -1007,6 +1018,7 @@ class MainMenuWindow:
         self._add_selectable_note(main_menu_tab, "Раздел готов к наполнению функциями.", pady=(8, 0))
 
         self._build_relay_tab(relay_tab)
+        self._build_hundred_tab(hundred_tab)
         self._build_accounts_tab(accounts_tab)
         self._build_proxy_tab(proxy_tab)
         self._load_proxy_state()
@@ -1652,6 +1664,99 @@ class MainMenuWindow:
         scroll.grid(row=0, column=1, sticky="ns")
         self.relay_runs_tree.configure(yscrollcommand=scroll.set)
 
+    def _build_hundred_tab(self, frame: ttk.Frame) -> None:
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(4, weight=1)
+
+        ttk.Label(frame, text="100 сообщений", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, sticky="w")
+        self._add_selectable_note(
+            frame,
+            (
+                "Одна строка = одна задача. В каждой строке до 100 сообщений через запятую.\n"
+                "Можно сразу вставить несколько строк (несколько задач) и запустить их параллельно.\n"
+                "Формат строки: [chat_id или ссылка =>] сообщение 1, сообщение 2, ...\n"
+                "Если chat не указан в строке, используется поле 'Чат по умолчанию'.\n"
+                "Лимит: до 10 одновременных задач на один аккаунт."
+            ),
+            grid={"row": 1, "column": 0, "sticky": "ew", "pady": (8, 10)},
+        )
+
+        config = ttk.LabelFrame(frame, text="Параметры", padding=10)
+        config.grid(row=2, column=0, sticky="ew")
+        for i in range(8):
+            config.columnconfigure(i, weight=1 if i in {1, 3, 5, 7} else 0)
+
+        ttk.Label(config, text="Аккаунт").grid(row=0, column=0, sticky="w", pady=4)
+        self.hundred_account_combo = ttk.Combobox(
+            config,
+            textvariable=self.hundred_account_var,
+            state="readonly",
+            width=42,
+        )
+        self.hundred_account_combo.grid(row=0, column=1, columnspan=3, sticky="ew", pady=4, padx=(8, 10))
+
+        ttk.Label(config, text="Чат по умолчанию").grid(row=0, column=4, sticky="w", pady=4)
+        ttk.Entry(config, textvariable=self.hundred_chat_var, width=30).grid(
+            row=0, column=5, columnspan=3, sticky="ew", pady=4, padx=(8, 0)
+        )
+
+        ttk.Label(config, text="Задержка, сек (min/max)").grid(row=1, column=0, sticky="w", pady=4)
+        delay_row = ttk.Frame(config)
+        delay_row.grid(row=1, column=1, sticky="w", pady=4, padx=(8, 0))
+        ttk.Entry(delay_row, textvariable=self.hundred_delay_min_var, width=8).pack(side="left")
+        ttk.Label(delay_row, text="/").pack(side="left", padx=4)
+        ttk.Entry(delay_row, textvariable=self.hundred_delay_max_var, width=8).pack(side="left")
+
+        ttk.Button(
+            config,
+            text="Запустить задачи",
+            command=self._button_command("100 сообщений: запуск", self.start_hundred_tasks),
+        ).grid(row=1, column=5, sticky="w", padx=(8, 0))
+        ttk.Button(
+            config,
+            text="Обновить аккаунты",
+            command=self._button_command("100 сообщений: обновить аккаунты", self.refresh_accounts),
+        ).grid(row=1, column=6, sticky="w", padx=(8, 0))
+
+        text_box = ttk.LabelFrame(frame, text="Пачки сообщений (по одной задаче в строке)", padding=10)
+        text_box.grid(row=3, column=0, sticky="nsew", pady=(10, 0))
+        text_box.columnconfigure(0, weight=1)
+        text_box.rowconfigure(0, weight=1)
+        self.hundred_input_text = ScrolledText(text_box, wrap="word", height=10)
+        self.hundred_input_text.grid(row=0, column=0, sticky="nsew")
+
+        ttk.Label(frame, textvariable=self.hundred_status_var, foreground="#0b5ed7").grid(
+            row=4, column=0, sticky="w", pady=(8, 6)
+        )
+
+        table = ttk.LabelFrame(frame, text="Задачи 100 сообщений", padding=10)
+        table.grid(row=5, column=0, sticky="nsew")
+        frame.rowconfigure(5, weight=1)
+        table.columnconfigure(0, weight=1)
+        table.rowconfigure(0, weight=1)
+
+        self.hundred_tasks_tree = ttk.Treeview(
+            table,
+            columns=("task_id", "account", "chat_id", "progress", "delay", "status", "updated_at"),
+            show="headings",
+            height=12,
+        )
+        for column, text, width in (
+            ("task_id", "Task", 90),
+            ("account", "Аккаунт", 230),
+            ("chat_id", "Чат", 180),
+            ("progress", "Прогресс", 120),
+            ("delay", "Задержка, сек", 120),
+            ("status", "Статус", 130),
+            ("updated_at", "Обновлён", 220),
+        ):
+            self.hundred_tasks_tree.heading(column, text=text)
+            self.hundred_tasks_tree.column(column, width=width, anchor="w")
+        self.hundred_tasks_tree.grid(row=0, column=0, sticky="nsew")
+
+        scroll = ttk.Scrollbar(table, orient="vertical", command=self.hundred_tasks_tree.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.hundred_tasks_tree.configure(yscrollcommand=scroll.set)
 
     @staticmethod
     def _summary_cell(parent: ttk.LabelFrame, title: str, value_var: tk.StringVar, column: int) -> None:
@@ -1835,6 +1940,20 @@ class MainMenuWindow:
                 ),
             )
 
+        options: dict[str, dict[str, object]] = {}
+        for row in rows:
+            session_file = str(row.get("session_file") or "")
+            label = f"{row.get('id')} | {row.get('account_name') or session_file} | {session_file}"
+            options[label] = {
+                "id": row.get("id"),
+                "account_name": row.get("account_name") or session_file,
+                "session_file": session_file,
+            }
+        self.hundred_account_options = options
+        self.hundred_account_combo.configure(values=list(options.keys()))
+
+        if self.hundred_account_var.get() not in options:
+            self.hundred_account_var.set(next(iter(options.keys()), ""))
         total = len(rows)
         self.total_accounts_var.set(str(total))
         self.live_accounts_var.set(str(counts.get("live", 0)))
@@ -1950,6 +2069,183 @@ class MainMenuWindow:
         selected = self.relay_runs_tree.selection()
         if selected:
             self.relay_run_id_var.set(selected[0])
+
+    def start_hundred_tasks(self) -> None:
+        account_data = self.hundred_account_options.get(self.hundred_account_var.get().strip())
+        if account_data is None:
+            raise_message("Выбери аккаунт для отправки.")
+            return
+
+        account_id = int(account_data["id"])
+        session_file = str(account_data["session_file"])
+        account_name = str(account_data["account_name"])
+
+        delay_min = self._parse_single_int(self.hundred_delay_min_var.get(), "Delay min")
+        delay_max = self._parse_single_int(self.hundred_delay_max_var.get(), "Delay max")
+        if None in {delay_min, delay_max}:
+            return
+        if delay_min <= 0 or delay_max <= 0 or delay_min > delay_max:
+            raise_message("Задержка указана некорректно: min/max должны быть > 0 и min <= max.")
+            return
+
+        existing_active = sum(
+            1
+            for task in self.hundred_tasks.values()
+            if int(task["account_id"]) == account_id and str(task["status"]) in {"queued", "running"}
+        )
+
+        default_chat_raw = self.hundred_chat_var.get().strip()
+        lines = [line.strip() for line in self.hundred_input_text.get("1.0", "end").splitlines() if line.strip()]
+        if not lines:
+            raise_message("Добавь минимум одну строку с сообщениями.")
+            return
+
+        jobs_to_start: list[tuple[int, list[str]]] = []
+        for line in lines:
+            parsed = self._parse_hundred_line(line=line, default_chat_raw=default_chat_raw)
+            if parsed is None:
+                return
+            jobs_to_start.append(parsed)
+
+        if existing_active + len(jobs_to_start) > 10:
+            raise_message(
+                f"Для аккаунта '{account_name}' можно запустить максимум 10 задач одновременно.\n"
+                f"Сейчас активно: {existing_active}, запрошено: {len(jobs_to_start)}."
+            )
+            return
+
+        backend = self._get_hundred_backend(account_id=account_id, session_file=session_file)
+        if backend is None:
+            return
+
+        for target_chat_id, messages in jobs_to_start:
+            self.hundred_task_counter += 1
+            task_id = f"H{self.hundred_task_counter:05d}"
+            task_record = {
+                "task_id": task_id,
+                "account_id": account_id,
+                "account_name": account_name,
+                "chat_id": target_chat_id,
+                "messages_total": len(messages),
+                "messages_sent": 0,
+                "delay": f"{delay_min}/{delay_max}",
+                "status": "running",
+                "updated_at": format_dt(datetime.now(UTC)),
+            }
+            self.hundred_tasks[task_id] = task_record
+            self._render_hundred_tasks_table()
+
+            future = self.worker.submit(
+                backend.send_text_pack(
+                    target_chat_id=target_chat_id,
+                    messages=messages,
+                    delay_min=delay_min,
+                    delay_max=delay_max,
+                )
+            )
+
+            def _done_callback(done_future: Future[object], current_task_id: str = task_id) -> None:
+                self.root.after(0, self._on_hundred_task_done, current_task_id, done_future)
+
+            future.add_done_callback(_done_callback)
+
+        self.hundred_status_var.set(f"Запущено задач: {len(jobs_to_start)} для аккаунта {account_name}.")
+
+    def _parse_hundred_line(self, *, line: str, default_chat_raw: str) -> tuple[int, list[str]] | None:
+        chat_raw = default_chat_raw
+        payload = line
+        if "=>" in line:
+            parts = line.split("=>", 1)
+            chat_raw = parts[0].strip()
+            payload = parts[1].strip()
+
+        if not chat_raw:
+            raise_message("Не указан чат: заполни 'Чат по умолчанию' или используй формат chat => сообщения.")
+            return None
+
+        chat_id = self._parse_chat_id(chat_raw, "Чат")
+        if chat_id is None:
+            return None
+
+        messages = [chunk.strip() for chunk in payload.split(",") if chunk.strip()]
+        if not messages:
+            raise_message("В строке задачи не найдено сообщений. Используй формат: сообщение1, сообщение2, ...")
+            return None
+        if len(messages) > 100:
+            raise_message("Одна задача поддерживает максимум 100 сообщений в строке.")
+            return None
+        return chat_id, messages
+
+    def _get_hundred_backend(self, *, account_id: int, session_file: str) -> TelegramManagerBackend | None:
+        existing = self.hundred_backends_by_account.get(account_id)
+        if existing is not None:
+            return existing
+
+        session_path = (self.session_dir / session_file).resolve()
+        if not session_path.exists():
+            raise_message(f"Session файл для аккаунта не найден: {session_file}")
+            return None
+        try:
+            settings = Settings.load()
+            backend = TelegramManagerBackend(
+                settings=settings,
+                db=self.db,
+                logger=self.logger,
+                session_path=session_path,
+            )
+        except Exception as exc:
+            messagebox.showerror("Ошибка backend", f"Не удалось подготовить аккаунт {session_file}:\n{exc}")
+            return None
+        self.hundred_backends_by_account[account_id] = backend
+        return backend
+
+    def _on_hundred_task_done(self, task_id: str, future: Future[object]) -> None:
+        task = self.hundred_tasks.get(task_id)
+        if task is None:
+            return
+        task["updated_at"] = format_dt(datetime.now(UTC))
+        try:
+            result = future.result()
+        except Exception as exc:
+            task["status"] = "failed"
+            self.hundred_status_var.set(f"Задача {task_id} завершилась с ошибкой: {exc}")
+            self.logger.exception("100 messages task failed: %s", task_id)
+            messagebox.showerror("Ошибка задачи", f"{task_id}: {exc}")
+        else:
+            sent_count = int(result.get("sent_count", 0)) if isinstance(result, dict) else 0
+            total_count = int(result.get("total_count", task["messages_total"])) if isinstance(result, dict) else int(
+                task["messages_total"]
+            )
+            task["messages_sent"] = sent_count
+            task["messages_total"] = total_count
+            task["status"] = "done"
+            self.hundred_status_var.set(
+                f"Задача {task_id} выполнена: отправлено {sent_count}/{total_count} сообщений."
+            )
+        self._render_hundred_tasks_table()
+
+    def _render_hundred_tasks_table(self) -> None:
+        for item in self.hundred_tasks_tree.get_children():
+            self.hundred_tasks_tree.delete(item)
+        for task_id, task in sorted(
+            self.hundred_tasks.items(),
+            key=lambda item: int(str(item[0]).removeprefix("H")),
+            reverse=True,
+        ):
+            self.hundred_tasks_tree.insert(
+                "",
+                "end",
+                iid=task_id,
+                values=(
+                    task_id,
+                    task["account_name"],
+                    task["chat_id"],
+                    f"{task['messages_sent']}/{task['messages_total']}",
+                    task["delay"],
+                    task["status"],
+                    task["updated_at"],
+                ),
+            )
 
     def _collect_relay_params(self) -> dict[str, object] | None:
         delay_min = self._parse_single_int(self.relay_delay_min_var.get(), "Delay min")
@@ -2094,6 +2390,8 @@ class MainMenuWindow:
         try:
             if self.backend is not None:
                 self.worker.submit(self.backend.disconnect()).result(timeout=10)
+            for backend in self.hundred_backends_by_account.values():
+                self.worker.submit(backend.disconnect()).result(timeout=10)
         except Exception:
             self.logger.exception("Ошибка при отключении backend")
         finally:
